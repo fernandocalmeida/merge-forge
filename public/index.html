@@ -62,6 +62,15 @@
       <button class="btn btn--fantasma btn--bloco" type="submit" id="entrar-trocar"><i class="ph ph-key"></i>Entrar e trocar a senha</button>
     </form>
 
+    <form id="form-termo" hidden>
+      <h1>Termo de uso</h1>
+      <p>Antes de começar, leia e aceite. É rápido e protege você e a Merge IA.</p>
+      <div class="termo-caixa" id="termo-caixa" tabindex="0" aria-label="Texto do termo de uso"></div>
+      <label class="termo-aceite"><input type="checkbox" id="termo-check" /><span>Li e concordo com o Termo de uso. Vou usar o Merge Forge apenas com conteúdo que tenho direito de usar.</span></label>
+      <div class="erro-form" id="erro-termo" role="alert"></div>
+      <button class="btn btn--primario btn--grande btn--bloco" type="submit" id="termo-aceitar" disabled><span class="rotulo">Aceitar e continuar</span></button>
+    </form>
+
     <form id="form-trocar" hidden>
       <h1 id="trocar-titulo">Crie sua senha</h1>
       <p id="trocar-texto">Esse é seu primeiro acesso. Troque a senha provisória por uma só sua.</p>
@@ -104,6 +113,7 @@
       <div class="trilho-mini">
         <button class="btn btn--fantasma" data-instalar><i class="ph ph-device-mobile"></i><span class="rotulo">Instalar app</span></button>
         <button class="btn btn--fantasma" data-trocar-senha hidden><i class="ph ph-key"></i><span class="rotulo">Trocar senha</span></button>
+        <button class="btn btn--fantasma" data-ver-termo><i class="ph ph-scroll"></i><span class="rotulo">Termo de uso</span></button>
       </div>
     </div>
   </aside>

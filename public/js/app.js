@@ -3,6 +3,7 @@ import { montarEstudio, abrirEstudo, abrirPainelIA, VISOES } from "./estudio.js"
 import { abrirConexoes, lerEstado, aoMudarConexao } from "./conexoes.js";
 import { montarCelular } from "./celular.js";
 import { abrirExportar } from "./exportar.js";
+import { textoDoTermo, TERMO_TITULO } from "./termo.js";
 
 // =====================================================================
 // utilidades
@@ -163,7 +164,11 @@ export async function api(caminho, opcoes = {}) {
   }
   if (r.status === 503 || r.status === 504) marcarForaDoAr();
   if (r.status === 401) { mostrarPortao("entrar"); throw new Error("precisa entrar com a senha"); }
-  if (r.status === 403) { mostrarPortao("trocar", true); throw new Error("crie sua senha antes de usar"); }
+  if (r.status === 403) {
+    const d = await r.clone().json().catch(() => ({}));
+    if (d.precisaTrocar) { mostrarPortao("trocar", true); throw new Error("crie sua senha antes de usar"); }
+    if (d.precisaTermo) { sessao.precisaTermo = true; sessao.termoVersao = d.termoVersao || sessao.termoVersao; mostrarPortao("termo"); throw new Error("aceite o termo de uso antes de usar"); }
+  }
   return r;
 }
 
@@ -172,6 +177,14 @@ function mostrarPortao(qual, primeiro = false) {
   $("#portao").hidden = false;
   $("#form-entrar").hidden = qual !== "entrar";
   $("#form-trocar").hidden = qual !== "trocar";
+  $("#form-termo").hidden = qual !== "termo";
+  if (qual === "termo") {
+    $("#termo-caixa").replaceChildren(textoDoTermo());
+    $("#termo-check").checked = false;
+    $("#termo-aceitar").disabled = true;
+    $("#erro-termo").textContent = "";
+    $("#termo-caixa").scrollTop = 0;
+  }
   if (qual === "entrar") { $("#erro-entrar").textContent = ""; $("#senha").focus(); }
   if (qual === "trocar") {
     const f = $("#form-trocar");
@@ -191,6 +204,7 @@ function mostrarPortao(qual, primeiro = false) {
 }
 
 function mostrarApp() {
+  if (sessao && sessao.precisaTermo) return mostrarPortao("termo");
   lerEstado();
   montarCelular();
   $("#portao").hidden = true;
@@ -275,6 +289,35 @@ $("#form-trocar").addEventListener("submit", async (ev) => {
   }
 });
 $("#trocar-cancelar").addEventListener("click", () => { senhaProvisoria = ""; mostrarApp(); });
+
+// termo de uso: aceitar (primeiro acesso ou versão nova) e reler a qualquer momento
+$("#termo-check").addEventListener("change", (e) => { $("#termo-aceitar").disabled = !e.target.checked; });
+$("#form-termo").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!$("#termo-check").checked) return;
+  const btn = $("#termo-aceitar");
+  estadoBotao(btn, "carregando", "Salvando");
+  try {
+    const r = await fetch("/api/termo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ aceito: true, versao: sessao.termoVersao }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401) return mostrarPortao("entrar");
+    if (!r.ok || !d.ok) throw new Error(d.erro || "não deu para salvar");
+    sessao.precisaTermo = false;
+    sessao.termoAceitoEm = d.aceitoEm;
+    mostrarApp();
+    aviso("Termo aceito. Bom estudo!");
+  } catch (e) {
+    $("#erro-termo").textContent = "Não deu para salvar: " + e.message;
+  } finally {
+    estadoBotao(btn, "", "Aceitar e continuar");
+  }
+});
+export function verTermo() {
+  const aceito = sessao && sessao.termoAceitoEm ? `Você aceitou esta versão em ${new Date(sessao.termoAceitoEm).toLocaleDateString("pt-BR")}.` : null;
+  abrirFolha([el("h2", { id: "folha-titulo", texto: TERMO_TITULO }), aceito ? el("p", { class: "meta", texto: aceito }) : null, textoDoTermo(),
+    el("button", { class: "btn btn--secundario btn--bloco", onclick: fecharFolha }, ["Fechar"])].filter(Boolean));
+}
+$$("[data-ver-termo]").forEach((b) => b.addEventListener("click", verTermo));
 $$("[data-trocar-senha]").forEach((b) => b.addEventListener("click", () => mostrarPortao("trocar", false)));
 
 // =====================================================================
@@ -949,6 +992,7 @@ function guia(tipo) {
     sessao = s;
     if (s.precisaSenha && !s.logado) return mostrarPortao("entrar");
     if (s.precisaTrocar) return mostrarPortao("trocar", true);
+    if (s.precisaTermo) return mostrarPortao("termo");
   } catch { marcarForaDoAr(); /* abre a casca mesmo assim, com a faixa de aviso */ }
   mostrarApp();
 })();

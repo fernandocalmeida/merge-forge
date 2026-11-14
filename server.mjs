@@ -40,6 +40,13 @@ const SENHA = process.env.SENHA_PROVISORIA || process.env.SENHA || "";
 const DADOS_DIR = process.env.DADOS_DIR || path.join(__dirname, "dados");
 const ARQUIVO_SENHA = path.join(DADOS_DIR, "senha.json");
 const SENHA_MIN = 8;
+// Termo de uso: precisa ser aceito antes de usar. Mudou o texto (public/js/termo.js)? Mude a versão
+// e o app pede um novo aceite. O aceite fica em dados/termo.json (data e versão).
+const TERMO_VERSAO = "2026-11-14";
+const ARQUIVO_TERMO = path.join(DADOS_DIR, "termo.json");
+let termoAceito = null;
+try { termoAceito = JSON.parse(readFileSync(ARQUIVO_TERMO, "utf8")); } catch { /* ainda não aceitou */ }
+const termoPendente = () => !termoAceito || termoAceito.versao !== TERMO_VERSAO;
 // Se DIAS_GUARDAR estiver definido, vídeos mais velhos que isso são apagados sozinhos.
 const DIAS_GUARDAR = Number(process.env.DIAS_GUARDAR || 0);
 const MAX_SIMULTANEOS = Number(process.env.MAX_SIMULTANEOS || 2);
@@ -566,7 +573,7 @@ const servidor = http.createServer(async (req, res) => {
 
     if (rota === "/api/sessao" && req.method === "GET") {
       const logado = autenticado(req);
-      return json(res, 200, { precisaSenha: senhaLigada(), logado, precisaTrocar: logado && precisaTrocar() });
+      return json(res, 200, { precisaSenha: senhaLigada(), logado, precisaTrocar: logado && precisaTrocar(), precisaTermo: termoPendente(), termoVersao: TERMO_VERSAO, termoAceitoEm: termoAceito ? termoAceito.aceitoEm : null });
     }
 
     if (rota === "/api/entrar" && req.method === "POST") {
@@ -601,6 +608,21 @@ const servidor = http.createServer(async (req, res) => {
 
     // Enquanto a senha inicial não for trocada, nada além da troca funciona.
     if (protegida && precisaTrocar()) return json(res, 403, { ok: false, erro: "crie sua senha antes de usar", precisaTrocar: true });
+
+    // aceite do termo de uso (registra data e versão)
+    if (rota === "/api/termo" && req.method === "POST") {
+      const { versao, aceito } = await lerCorpo(req);
+      if (aceito !== true || versao !== TERMO_VERSAO) return json(res, 400, { ok: false, erro: "marque que leu e concorda com a versão atual do termo" });
+      const dados = { versao: TERMO_VERSAO, aceitoEm: new Date().toISOString() };
+      await mkdir(DADOS_DIR, { recursive: true, mode: 0o700 });
+      await writeFile(ARQUIVO_TERMO + ".tmp", JSON.stringify(dados), { mode: 0o600 });
+      await rename(ARQUIVO_TERMO + ".tmp", ARQUIVO_TERMO);
+      termoAceito = dados;
+      console.log(`termo de uso aceito (versão ${TERMO_VERSAO})`);
+      return json(res, 200, { ok: true, ...dados });
+    }
+    // sem o termo aceito, nada além de ler a sessão e aceitar o termo funciona
+    if (protegida && termoPendente()) return json(res, 403, { ok: false, erro: "aceite o termo de uso antes de usar", precisaTermo: true, termoVersao: TERMO_VERSAO });
 
     if (rota === "/api/info" && req.method === "POST") {
       const { url: link } = await lerCorpo(req);

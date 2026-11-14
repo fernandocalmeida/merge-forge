@@ -1,6 +1,6 @@
 // Tela "Conectar IA": conta Claude (login do Claude Code ou token), Groq, conta ChatGPT (Codex) e, opcionalmente, chaves de API.
 // Os valores colados vão direto para o servidor, que testa e guarda no .env; eles nunca voltam para a tela.
-import { $, el, icone, api, aviso, abrirFolha, fecharFolha } from "./app.js";
+import { $, el, icone, api, aviso, abrirFolha, fecharFolha, verTermo } from "./app.js";
 
 let estado = null;
 let sondagem = null;
@@ -279,6 +279,7 @@ function desenhar() {
     el("p", { class: "meta", texto: emUso }),
     el("div", { class: "con-lista" }, [secaoClaude(s), secaoGroq(s), secaoImagem(s), secaoApi(s)]),
     el("button", { class: "btn btn--secundario btn--bloco", onclick: fecharFolha }, ["Fechar"]),
+    el("button", { class: "btn btn--fantasma btn--bloco", onclick: verTermo }, [icone("scroll"), "Termo de uso"]),
   ], { aoFechar: () => clearInterval(sondagem) });
 }
 

@@ -88,7 +88,7 @@ merge-forge/
 
 ## Uso responsável
 
-O Merge Forge é uma ferramenta de **estudo**. Use com conteúdo próprio, gravações de aula ou conteúdo que você tenha direito de usar. Baixar conteúdo de terceiros pode violar os termos de uso das plataformas e direitos autorais: **a responsabilidade pelo uso é de quem usa.** O download depende de ferramentas de terceiros (yt-dlp) e pode parar de funcionar quando as plataformas mudam; não há garantia de funcionamento.
+O Merge Forge é uma ferramenta de **estudo**. No primeiro acesso, o app pede o aceite do **[Termo de uso](TERMOS-DE-USO.md)**. Use com conteúdo próprio, gravações de aula ou conteúdo que você tenha direito de usar. Baixar conteúdo de terceiros pode violar os termos de uso das plataformas e direitos autorais: **a responsabilidade pelo uso é de quem usa.** O download depende de ferramentas de terceiros (yt-dlp) e pode parar de funcionar quando as plataformas mudam; não há garantia de funcionamento.
 
 ## Licença
 
