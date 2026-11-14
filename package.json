@@ -1,0 +1,19 @@
+{
+  "name": "merge-forge",
+  "version": "3.0.0",
+  "description": "Merge Forge, da Merge IA: capta vídeos (link ou arquivo) e transforma em resumo, mapa mental, infográfico e material de estudo com IA.",
+  "type": "module",
+  "private": true,
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.0.0"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "homepage": "https://mergeia.com.br"
+}

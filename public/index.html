@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Merge Forge · Merge IA</title>
+<meta name="description" content="Baixe vídeos de redes sociais, assista, compartilhe e transforme em resumo, mapa mental e infográfico." />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/logo-forge.png" />
+<link rel="apple-touch-icon" href="/icone-forge-180.png" />
+<meta name="theme-color" content="#07080a" />
+<meta name="color-scheme" content="dark" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Merge Forge" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css" />
+<link rel="stylesheet" href="/css/app.css" />
+<link rel="stylesheet" href="/css/estudio.css" />
+<script>
+  // O convite de instalação do Chrome pode chegar antes de qualquer script: guardamos aqui.
+  window.__convite = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    window.__convite = e;
+    window.dispatchEvent(new Event("convite-pronto"));
+  });
+</script>
+</head>
+<body>
+
+<!-- fundo: brilho dourado que se move devagar + textura -->
+<div class="ambiente" aria-hidden="true"><span class="aurora a1"></span><span class="aurora a2"></span><span class="aurora a3"></span></div>
+<div class="grao" aria-hidden="true"></div>
+
+<div class="faixa-offline" role="alert">
+  <i class="ph-fill ph-plugs"></i>
+  <span><strong>O app do computador não está respondendo.</strong> Se este é o celular, confira se o computador está ligado e com o Tailscale/Wi‑Fi ativo. Tentando de novo sozinho...</span>
+</div>
+
+<!-- ============ ENTRAR / CRIAR SENHA ============ -->
+<section class="portao" id="portao" hidden>
+  <div class="caixa vidro">
+    <div class="marca"><img src="/logo-forge.png" alt="" /><div><strong>Merge Forge</strong><span>por Merge IA</span></div></div>
+
+    <form id="form-entrar" hidden>
+      <h1>Entrar</h1>
+      <p>Esse painel é privado. Você digita a senha uma vez e o aparelho lembra.</p>
+      <div class="campo">
+        <label for="senha">Senha</label>
+        <div class="senha-caixa">
+          <input id="senha" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required />
+          <button type="button" class="ver-senha" aria-label="Mostrar a senha" aria-pressed="false"><i class="ph ph-eye"></i></button>
+        </div>
+      </div>
+      <div class="erro-form" id="erro-entrar" role="alert"></div>
+      <button class="btn btn--primario btn--grande btn--bloco" type="submit"><span class="rotulo">Entrar</span></button>
+      <button class="btn btn--fantasma btn--bloco" type="submit" id="entrar-trocar"><i class="ph ph-key"></i>Entrar e trocar a senha</button>
+    </form>
+
+    <form id="form-trocar" hidden>
+      <h1 id="trocar-titulo">Crie sua senha</h1>
+      <p id="trocar-texto">Esse é seu primeiro acesso. Troque a senha provisória por uma só sua.</p>
+      <div class="campo" id="campo-atual">
+        <label for="senha-atual">Senha atual</label>
+        <input id="senha-atual" type="password" autocomplete="current-password" />
+      </div>
+      <div class="campo">
+        <label for="senha-nova">Nova senha (mínimo 8 caracteres)</label>
+        <input id="senha-nova" type="password" autocomplete="new-password" minlength="8" required />
+      </div>
+      <div class="campo">
+        <label for="senha-confirma">Repita a nova senha</label>
+        <input id="senha-confirma" type="password" autocomplete="new-password" minlength="8" required />
+      </div>
+      <div class="erro-form" id="erro-trocar" role="alert"></div>
+      <button class="btn btn--primario btn--grande btn--bloco" type="submit"><span class="rotulo">Salvar senha</span></button>
+      <button class="btn btn--fantasma btn--bloco" type="button" id="trocar-cancelar">Cancelar</button>
+    </form>
+  </div>
+</section>
+
+<!-- ============ APP ============ -->
+<div class="app" id="app" hidden>
+
+  <aside class="trilho vidro" aria-label="Menu">
+    <a class="marca" href="/"><img src="/logo-forge.png" alt="" /><div><strong>Merge Forge</strong><span>por Merge IA</span></div></a>
+    <nav class="nav">
+      <span class="nav-indicador" id="nav-indicador" aria-hidden="true"></span>
+      <button class="item-nav" data-ir="baixar"><i class="ph ph-download-simple"></i><span>Baixar</span></button>
+      <button class="item-nav" data-ir="biblioteca"><i class="ph ph-squares-four"></i><span>Biblioteca</span><span class="contador" data-contador></span></button>
+      <button class="item-nav" data-ir="estudio"><i class="ph ph-sparkle"></i><span>Estúdio IA</span><span class="novo">IA</span></button>
+    </nav>
+    <div class="trilho-rodape">
+      <button class="conexao-btn" data-conexoes>
+        <span class="con-anel"><i class="ph-fill ph-sparkle"></i></span>
+        <span><strong>Conectar IA</strong><small data-conexao-status>Verificando</small></span>
+        <i class="ph ph-caret-right"></i>
+      </button>
+      <div class="trilho-mini">
+        <button class="btn btn--fantasma" data-instalar><i class="ph ph-device-mobile"></i><span class="rotulo">Instalar app</span></button>
+        <button class="btn btn--fantasma" data-trocar-senha hidden><i class="ph ph-key"></i><span class="rotulo">Trocar senha</span></button>
+      </div>
+    </div>
+  </aside>
+
+  <header class="topo">
+    <a class="marca" href="/"><img src="/logo-forge.png" alt="" /><div><strong>Merge Forge</strong><span>por Merge IA</span></div></a>
+    <div class="topo-acoes">
+      <button class="btn btn--fantasma btn--icone" data-conexoes aria-label="Conectar IA"><i class="ph ph-sparkle"></i></button>
+      <button class="btn btn--fantasma btn--icone" data-instalar aria-label="Instalar no celular"><i class="ph ph-device-mobile"></i></button>
+      <button class="btn btn--fantasma btn--icone" data-trocar-senha aria-label="Trocar senha" hidden><i class="ph ph-key"></i></button>
+    </div>
+  </header>
+
+  <main class="conteudo">
+    <div class="miolo">
+
+      <!-- ---------- BAIXAR ---------- -->
+      <section class="tela" id="tela-baixar" aria-labelledby="t-baixar">
+        <div class="baixar-grade">
+          <div class="palco">
+            <div class="hero">
+              <h1 id="t-baixar">Cole o link.<br /><span class="dourado">O vídeo é seu.</span></h1>
+              <p>Cole um link ou arraste um vídeo ou áudio. Depois assista, compartilhe e transforme em resumo, mapa mental e infográfico.</p>
+            </div>
+
+            <div class="barra-link" id="barra-link">
+              <span class="barra-borda" aria-hidden="true"></span>
+              <i class="ph ph-link-simple barra-ic"></i>
+              <div class="barra-campo">
+                <label class="sr" for="link">Link do vídeo</label>
+                <input id="link" type="url" inputmode="url" autocomplete="off" spellcheck="false" />
+                <span class="ph-anim" id="ph-anim" aria-hidden="true">Cole um link do <b>Instagram</b></span>
+              </div>
+              <button class="btn btn--fantasma btn--icone" id="limpar" aria-label="Limpar" hidden><i class="ph ph-x"></i></button>
+              <button class="btn btn--enviar" id="enviar" title="Enviar um vídeo ou áudio do seu aparelho"><i class="ph ph-upload-simple"></i><span>Arquivo</span></button>
+              <input type="file" id="arquivo" accept="video/*,audio/*,.mkv,.opus,.flac" hidden />
+              <button class="btn btn--colar magnetico" id="colar"><i class="ph ph-clipboard-text"></i><span>Colar</span><kbd>Ctrl V</kbd></button>
+              <div class="soltar" aria-hidden="true"><i class="ph ph-arrow-fat-line-down"></i>Solte o link ou o arquivo aqui</div>
+            </div>
+            <div class="redes-faixa" id="redes-suportadas" aria-label="Redes suportadas"></div>
+
+            <div id="previa"></div>
+
+            <div class="bloco-qualidade">
+              <div class="bloco-cab"><h2>Qualidade</h2><span id="qual-desc" class="mono"></span></div>
+              <div class="seletor" role="radiogroup" aria-label="Qualidade" id="qualidades">
+                <span class="seletor-ind" id="seletor-ind" aria-hidden="true"></span>
+                <button class="qualidade" role="radio" data-q="1080" aria-checked="false"><i class="ph ph-crown-simple"></i><strong>Máxima</strong><small>1080p</small><span class="tamanho mono" data-tam></span></button>
+                <button class="qualidade" role="radio" data-q="720" aria-checked="true"><i class="ph ph-monitor-play"></i><strong>HD</strong><small>720p</small><span class="tamanho mono" data-tam></span></button>
+                <button class="qualidade" role="radio" data-q="480" aria-checked="false"><i class="ph ph-feather"></i><strong>Leve</strong><small>480p</small><span class="tamanho mono" data-tam></span></button>
+                <button class="qualidade" role="radio" data-q="audio" aria-checked="false"><i class="ph ph-waveform"></i><strong>Áudio</strong><small>MP3</small><span class="tamanho mono" data-tam></span></button>
+              </div>
+            </div>
+
+            <div class="barra-acao">
+              <button class="cta magnetico" id="baixar" disabled>
+                <span class="cta-brilho" aria-hidden="true"></span>
+                <svg class="cta-anel" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="16" /></svg>
+                <span class="rotulo"><i class="ph-fill ph-download-simple" id="baixar-icone"></i><span id="baixar-texto">Baixar</span></span>
+              </button>
+              <div class="status" id="status" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <aside class="lado">
+            <div id="resultado"></div>
+            <section class="cartao vidro recentes" id="recentes" aria-labelledby="t-recentes">
+              <div class="bloco-cab"><h2 id="t-recentes">Recentes</h2><button class="link-sutil" data-ir="biblioteca">Ver tudo<i class="ph ph-arrow-right"></i></button></div>
+              <div id="recentes-lista"></div>
+            </section>
+            <button class="cartao promo" data-ir="estudio">
+              <span class="promo-borda" aria-hidden="true"></span>
+              <span class="promo-ic"><i class="ph-fill ph-sparkle"></i></span>
+              <span class="promo-txt"><strong>Estúdio IA</strong><small>Resumo, mapa mental, organograma, infográfico e linha do tempo de qualquer vídeo.</small></span>
+              <i class="ph ph-arrow-up-right"></i>
+            </button>
+            <section class="cartao vidro celular" id="celular" aria-labelledby="t-celular" hidden>
+              <div class="bloco-cab"><h2 id="t-celular"><i class="ph-fill ph-device-mobile"></i> Usar no celular</h2></div>
+              <div id="celular-corpo"></div>
+            </section>
+          </aside>
+        </div>
+        <section class="painel-ia" id="painel-baixar" aria-label="Painel de IA" hidden></section>
+      </section>
+
+      <!-- ---------- BIBLIOTECA ---------- -->
+      <section class="tela" id="tela-biblioteca" aria-labelledby="t-bib">
+        <div class="tela-cabeca">
+          <div>
+            <h1 id="t-bib">Biblioteca</h1>
+            <p id="bib-resumo">Tudo o que você já baixou.</p>
+          </div>
+        </div>
+        <div class="ferramentas">
+          <label class="busca"><i class="ph ph-magnifying-glass"></i><span class="sr">Buscar</span><input id="busca" type="search" placeholder="Buscar pelo título" /></label>
+          <div class="filtros" role="group" aria-label="Filtrar">
+            <button class="filtro" data-filtro="todos" aria-pressed="true">Todos</button>
+            <button class="filtro" data-filtro="video" aria-pressed="false">Vídeos</button>
+            <button class="filtro" data-filtro="audio" aria-pressed="false">Áudios</button>
+            <button class="filtro" data-filtro="estudo" aria-pressed="false">Com estudo</button>
+          </div>
+        </div>
+        <div class="biblioteca" id="biblioteca"></div>
+        <section class="painel-ia" id="painel-biblioteca" aria-label="Painel de IA" hidden></section>
+      </section>
+
+      <!-- ---------- ESTÚDIO ---------- -->
+      <section class="tela" id="tela-estudio" aria-labelledby="t-est">
+        <div class="tela-cabeca">
+          <div>
+            <h1 id="t-est">Estúdio <span class="dourado">IA</span></h1>
+            <p>Transforme um vídeo em resumo, mapa mental, organograma, infográfico e linha do tempo.</p>
+          </div>
+        </div>
+        <div id="estudio"></div>
+      </section>
+
+    </div>
+  </main>
+
+  <nav class="abas vidro" aria-label="Seções">
+    <span class="marcador" id="marcador"></span>
+    <button data-ir="baixar"><i class="ph ph-download-simple"></i>Baixar</button>
+    <button data-ir="biblioteca"><i class="ph ph-squares-four"></i>Biblioteca<span class="bolinha" data-contador-bolinha hidden></span></button>
+    <button data-ir="estudio"><i class="ph ph-sparkle"></i>Estúdio IA</button>
+  </nav>
+</div>
+
+<!-- folha reutilizável (player, ações do vídeo, guia de instalação, conexões) -->
+<div class="folha-fundo" id="folha-fundo">
+  <div class="folha" role="dialog" aria-modal="true" aria-labelledby="folha-titulo">
+    <div class="alca"></div>
+    <div id="folha-corpo"></div>
+  </div>
+</div>
+<div class="seta-guia" id="seta-guia" hidden aria-hidden="true"><i class="ph-fill ph-arrow-up"></i></div>
+<div class="aviso" id="aviso" role="status" aria-live="polite"></div>
+<div class="confete" id="confete" aria-hidden="true"></div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

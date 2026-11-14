@@ -1,0 +1,8 @@
+downloads/*
+!downloads/.gitkeep
+node_modules/
+dados/
+.env
+iniciar.cmd
+logs/
+.venv/
