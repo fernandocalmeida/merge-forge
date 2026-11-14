@@ -71,24 +71,42 @@ Escreva de forma direta, sem travessões longos.`;
 
 // ---------- utilidades ----------
 // No Windows, o `claude` instalado pelo npm é um atalho .cmd, que o Node não executa direto.
-// Aqui descobrimos o .exe de verdade que o atalho chama (resultado guardado em cache).
+// Aqui descobrimos o que o atalho chama de verdade: um .exe (ex.: claude) ou um script .js
+// que roda no Node (ex.: codex). Devolve { arquivo, antes }: rodar `arquivo` com `antes` + args.
+// Só guarda em cache quando acha (se o programa for instalado depois, o app acha sem reiniciar).
 const executaveis = new Map();
-export function resolverExecutavel(cmd) {
-  if (process.platform !== "win32" || /[\\/]/.test(cmd) || /\.\w{2,4}$/.test(cmd)) return cmd;
+export function resolverComando(cmd) {
+  if (process.platform !== "win32" || /[\\/]/.test(cmd) || /\.\w{2,4}$/.test(cmd)) return { arquivo: cmd, antes: [] };
   if (executaveis.has(cmd)) return executaveis.get(cmd);
-  let final = cmd;
+  let achados = [];
   try {
-    const achados = execFileSync("where.exe", [cmd], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).split(/\r?\n/).filter(Boolean);
-    const exe = achados.find((l) => /\.exe$/i.test(l));
-    const atalho = achados.find((l) => /\.cmd$/i.test(l));
-    if (exe) final = exe;
-    else if (atalho) {
-      const m = /"%dp0%\\([^"]+\.exe)"/i.exec(readFileSync(atalho, "utf8"));
-      if (m) final = path.join(path.dirname(atalho), m[1]);
-    }
-  } catch { /* não achou: deixa o nome como está */ }
+    achados = execFileSync("where.exe", [cmd], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).split(/\r?\n/).filter(Boolean);
+  } catch { /* fora do PATH: tenta a pasta global do npm abaixo */ }
+  // o app pode ter sido ligado antes do PATH ganhar a pasta do npm: procura lá também
+  const npmGlobal = process.env.APPDATA ? path.join(process.env.APPDATA, "npm", cmd + ".cmd") : null;
+  if (npmGlobal && existsSync(npmGlobal)) achados.push(npmGlobal);
+  let final = null;
+  const exe = achados.find((l) => /\.exe$/i.test(l));
+  const atalho = achados.find((l) => /\.cmd$/i.test(l));
+  if (exe) final = { arquivo: exe, antes: [] };
+  else if (atalho) {
+    let texto = "";
+    try { texto = readFileSync(atalho, "utf8"); } catch {}
+    const pasta = path.dirname(atalho);
+    // ignora o "%dp0%\node.exe" do cabeçalho: queremos o programa em node_modules
+    const mExe = /"%dp0%\\(node_modules\\[^"]+\.exe)"/i.exec(texto);
+    const mJs = /"%dp0%\\(node_modules\\[^"]+\.(?:c|m)?js)"/i.exec(texto);
+    if (mExe) final = { arquivo: path.join(pasta, mExe[1]), antes: [] };
+    else if (mJs) final = { arquivo: process.execPath, antes: [path.join(pasta, mJs[1])] };
+  }
+  if (!final) return { arquivo: cmd, antes: [] };
   executaveis.set(cmd, final);
   return final;
+}
+export const resolverExecutavel = (cmd) => resolverComando(cmd).arquivo;
+function iniciarProcesso(cmd, args, opcoes) {
+  const { arquivo, antes } = resolverComando(cmd);
+  return spawn(arquivo, [...antes, ...args], opcoes);
 }
 
 function rodar(cmd, args, { timeoutMs = 10 * 60 * 1000, entrada = null, cwd = undefined, env = undefined } = {}) {
@@ -96,7 +114,7 @@ function rodar(cmd, args, { timeoutMs = 10 * 60 * 1000, entrada = null, cwd = un
     // env: valores null REMOVEM a variável só para este comando
     const amb = { ...process.env, ...(env || {}) };
     for (const k of Object.keys(amb)) if (amb[k] === null) delete amb[k];
-    const p = spawn(resolverExecutavel(cmd), args, { cwd, env: amb, windowsHide: true });
+    const p = iniciarProcesso(cmd, args, { cwd, env: amb, windowsHide: true });
     let saida = "", erro = "";
     const timer = setTimeout(() => p.kill("SIGKILL"), timeoutMs);
     p.stdout.on("data", (d) => (saida += d.toString()));
@@ -617,7 +635,7 @@ export function iniciarLoginCodex() {
   mkdirSync(CODEX_HOME_APP, { recursive: true, mode: 0o700 });
   const env = { ...process.env, CODEX_HOME: CODEX_HOME_APP, NO_COLOR: "1" };
   for (const k of Object.keys(env)) if (/KEY|TOKEN|SENHA|SECRET|PASS/i.test(k)) delete env[k];
-  const proc = spawn(resolverExecutavel(CODEX), ["login", "--device-auth"], { env, cwd: CODEX_HOME_APP, windowsHide: true });
+  const proc = iniciarProcesso(CODEX, ["login", "--device-auth"], { env, cwd: CODEX_HOME_APP, windowsHide: true });
   const atual = { estado: "aguardando", url: null, codigo: null, erro: null, proc };
   loginCodex = atual;
   let texto = "";
