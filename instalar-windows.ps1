@@ -3,6 +3,7 @@
 # Opcoes:
 #   -SemInicializacao   instala e liga o app, mas NAO coloca no inicio do Windows (bom para experimentar)
 #   -Porta 8799         usa outra porta (padrao 8798)
+#   -Silencioso         nao abre o navegador no fim (usado pelo MergeForgeSetup.exe, que abre sozinho)
 # O que faz:
 #   1. confere Node, yt-dlp, Deno, ffmpeg, Google Chrome, Claude Code e Codex (instala pelo winget/npm o que faltar)
 #   2. instala as dependencias do app (npm install)
@@ -14,7 +15,8 @@
 
 param(
   [switch]$SemInicializacao,
-  [int]$Porta = 0
+  [int]$Porta = 0,
+  [switch]$Silencioso
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,6 +39,7 @@ function InstalarWinget($id, $nome) {
 function AcharChrome {
   $lugares = @(
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "$env:ProgramW6432\Google\Chrome\Application\chrome.exe",
     "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
     "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
   )
@@ -48,7 +51,7 @@ Passo "Conferindo o que o app precisa"
 
 # Node.js 20+
 if (-not (Tem "node")) { InstalarWinget "OpenJS.NodeJS.LTS" "Node.js" }
-if (-not (Tem "node")) { throw "O Node.js nao ficou disponivel. Feche e abra o PowerShell e rode de novo." }
+if (-not (Tem "node")) { throw "O Node.js nao ficou disponivel. Reinicie o computador e rode o instalador de novo." }
 $versao = [int]((node -v).TrimStart("v").Split(".")[0])
 if ($versao -lt 20) { throw "O app precisa do Node 20 ou mais novo (encontrei $(node -v)). Atualize em nodejs.org e rode de novo." }
 Ok "Node $(node -v)"
@@ -57,7 +60,7 @@ Ok "Node $(node -v)"
 if (-not (Tem "yt-dlp")) { InstalarWinget "yt-dlp.yt-dlp" "yt-dlp" }
 if (-not (Tem "deno")) { InstalarWinget "DenoLand.Deno" "Deno" }
 if (-not (Tem "ffmpeg")) { InstalarWinget "yt-dlp.FFmpeg" "ffmpeg" }
-if (-not (Tem "yt-dlp")) { throw "O yt-dlp nao ficou disponivel. Feche e abra o PowerShell e rode de novo." }
+if (-not (Tem "yt-dlp")) { throw "O yt-dlp nao ficou disponivel. Reinicie o computador e rode o instalador de novo." }
 Ok "yt-dlp $(yt-dlp --version)"
 if (Tem "deno") { Ok "Deno" } else { Aviso "Deno nao instalado: downloads do YouTube podem falhar (erro 403)." }
 if (Tem "ffmpeg") { Ok "ffmpeg" } else { Aviso "ffmpeg nao instalado: videos em alta qualidade e a apostila nao vao funcionar." }
@@ -165,4 +168,4 @@ Write-Host "Proximos passos no app:"
 Write-Host "  1. Leia e aceite o termo de uso."
 Write-Host "  2. Toque em 'Conectar IA': entre com a conta Claude e cole a chave gratis da Groq (console.groq.com/keys)."
 Write-Host "  3. Opcional: entre com a conta do ChatGPT para desenhar os infograficos."
-Start-Process $url
+if (-not $Silencioso) { Start-Process $url }

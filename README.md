@@ -48,19 +48,17 @@ No Windows, o instalador confere e instala tudo isso sozinho.
 
 ### Windows (recomendado)
 
-1. Baixe o projeto (botão **Code → Download ZIP**, ou `git clone`) para uma pasta fixa, por exemplo `D:\Apps\Merge Forge`.
-2. Na pasta, rode:
+1. Baixe o **MergeForgeSetup.exe** na página [Releases](../../releases/latest) deste repositório.
+2. Clique duas vezes nele, aceite o termo de uso e clique em **Instalar**. Não precisa abrir terminal.
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\instalar-windows.ps1
-   ```
+   O instalador baixa sozinho o que faltar (Node, yt-dlp, Deno, ffmpeg, Google Chrome, Claude Code e Codex). Tenha internet ligada; se o Windows perguntar se permite instalar alguma dessas ferramentas, clique em **Sim**. No fim ele cria o atalho **Merge Forge** na área de trabalho e no menu Iniciar, coloca o app no início do Windows e abre no navegador em `http://localhost:8798`.
 
-   O instalador confere e instala o que faltar (Node, yt-dlp, Deno, ffmpeg, Google Chrome, Claude Code e Codex), prepara o app, coloca no início do Windows e abre no navegador em `http://localhost:8798`.
+   Na primeira vez o Windows pode mostrar "O Windows protegeu o computador": clique em **Mais informações → Executar assim mesmo**.
+3. No app, aceite o termo de uso e siga o assistente **Conectar IA** para conectar as suas contas.
 
-   Só quer experimentar, sem iniciar junto com o Windows? Use `-SemInicializacao` (e, se quiser, `-Porta 8799`). Para ligar de novo depois, clique duas vezes em `ligar.vbs`.
-3. No app, aceite o termo de uso e toque em **Conectar IA** para conectar as suas contas.
+Para desinstalar: **Configurações → Aplicativos → Merge Forge → Desinstalar**. Ele pergunta se apaga também os vídeos e as configurações (o padrão é manter).
 
-Para desinstalar: `powershell -ExecutionPolicy Bypass -File .\desinstalar-windows.ps1` (não apaga os vídeos nem as suas configurações).
+Prefere rodar pelo terminal? Na pasta do projeto: `powershell -ExecutionPolicy Bypass -File .instalar-windows.ps1` (opções `-SemInicializacao` e `-Porta 8799`).
 
 ### Manual (qualquer sistema)
 
@@ -84,7 +82,8 @@ merge-forge/
 ├── exportar.mjs            # Arquivos exportados e ZIP em streaming
 ├── config.mjs              # Leitura e gravação segura do .env
 ├── public/                 # Interface (HTML, CSS e JavaScript, sem etapa de build) e app do celular
-├── instalar-windows.ps1    # Instalador para Windows
+├── abrir.vbs               # O que o atalho "Merge Forge" executa (liga o app e abre no navegador)
+├── instalar-windows.ps1    # Instalador para Windows (o MergeForgeSetup.exe roda este script escondido)
 ├── desinstalar-windows.ps1 # Desinstalador
 ├── .env.example            # Modelo de configuração (sem chaves)
 └── LICENSE                 # PolyForm Noncommercial 1.0.0

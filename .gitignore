@@ -7,3 +7,4 @@ iniciar.cmd
 ligar.vbs
 logs/
 .venv/
+dist/
