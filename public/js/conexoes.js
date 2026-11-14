@@ -267,7 +267,98 @@ function secaoApi(s) {
   ]);
 }
 
+// ---------- assistente de primeiros passos ----------
+// Três passos, um por tela: Claude (o cérebro), Groq (o ouvido) e ChatGPT (o ilustrador, opcional).
+// Cada passo usa a mesma seção da lista completa, então conectar por aqui ou por lá é igual.
+let modo = "lista";
+let passo = 0;
+const CHAVE_VISTO = "forge-assistente-visto";
+const prontoClaude = (s) => !!(s && ((s.claude && s.claude.logado) || s.tokenClaude || s.chaveApi));
+const prontoGroq = (s) => !!(s && s.groq);
+const prontoImagem = (s) => !!(s && ((s.codexInfo && s.codexInfo.conectado) || s.codex || s.openai));
+const PASSOS = [
+  { id: "claude", titulo: "Conta Claude", papel: "O cérebro", obrigatorio: true, pronto: prontoClaude,
+    texto: "Lê o que foi falado no vídeo e cria o resumo, o mapa mental, o organograma, a linha do tempo, as perguntas e o roteiro do infográfico. Usa a sua assinatura Claude (Pro ou Max).",
+    dica: "Não tem assinatura Claude? Abra \"Usar uma chave da API Anthropic\" logo abaixo: funciona igual, cobrando por uso.",
+    secao: (s) => [secaoClaude(s), secaoApi(s)] },
+  { id: "groq", titulo: "Transcrição (Groq)", papel: "O ouvido", obrigatorio: false, pronto: prontoGroq,
+    texto: "Transcreve o áudio dos vídeos que não têm legenda: quase todo vídeo do Instagram e do TikTok, e os arquivos que você enviar. É grátis.",
+    passos: ["Entre em console.groq.com (dá para entrar com a conta Google).", "No menu, abra API Keys e toque em Create API Key.", "Copie a chave e cole no campo abaixo."],
+    secao: (s) => [secaoGroq(s)] },
+  { id: "imagem", titulo: "Conta ChatGPT", papel: "O ilustrador", obrigatorio: false, pronto: prontoImagem,
+    texto: "Desenha o pôster do infográfico com o gerador de imagens do ChatGPT, na sua assinatura. É opcional: sem ele, todo o resto funciona (inclusive a apostila em PDF).",
+    secao: (s) => [secaoImagem(s)] },
+];
+
+function desenharAssistente() {
+  const s = estado;
+  const total = PASSOS.length;
+  const trilha = el("ol", { class: "ass-trilha", "aria-label": "Passos" }, PASSOS.map((p, i) => el("li", {
+    class: (i === passo ? "agora " : "") + (p.pronto(s) ? "feito" : ""),
+  }, [el("button", { type: "button", onclick: () => { passo = i; desenhar(); }, "aria-label": `Ir para ${p.titulo}` }, [
+    el("span", { class: "ass-bola" }, [p.pronto(s) ? icone("check", true) : el("span", { texto: String(i + 1) })]),
+    el("span", { class: "ass-nome", texto: p.papel }),
+  ])])));
+
+  // tela final: resumo do que está pronto
+  if (passo >= total) {
+    const essencial = prontoClaude(s);
+    return abrirFolha([
+      el("h2", { id: "folha-titulo", texto: essencial ? "Tudo pronto!" : "Quase lá" }),
+      trilha,
+      el("ul", { class: "ass-resumo" }, PASSOS.map((p) => el("li", { class: p.pronto(s) ? "ok" : "" }, [
+        icone(p.pronto(s) ? "check-circle" : p.obrigatorio ? "warning-circle" : "circle-dashed", true),
+        el("span", {}, [el("b", { texto: p.titulo }), el("small", { texto: p.pronto(s) ? "Conectado" : p.obrigatorio ? "Falta conectar: sem ele o Estúdio IA não funciona" : "Não conectado (opcional)" })]),
+      ]))),
+      el("p", { class: "con-texto", texto: essencial
+        ? "Agora é só colar o link de um vídeo (ou enviar um arquivo), baixar e tocar em \"Gerar estudo com IA\". Você pode voltar aqui quando quiser em Conectar IA."
+        : "Conecte a conta Claude para gerar os estudos. Você também pode fazer isso depois, em Conectar IA." }),
+      el("button", { class: "btn btn--primario btn--grande btn--bloco", onclick: () => { localStorage.setItem(CHAVE_VISTO, "1"); modo = "lista"; fecharFolha(); } }, [icone(essencial ? "rocket-launch" : "check", true), essencial ? "Começar a usar" : "Fechar e continuar depois"]),
+      essencial ? null : el("button", { class: "btn btn--fantasma btn--bloco", onclick: () => { passo = 0; desenhar(); } }, [icone("arrow-left"), "Voltar para a conta Claude"]),
+    ].filter(Boolean), { aoFechar: () => { clearInterval(sondagem); modo = "lista"; localStorage.setItem(CHAVE_VISTO, "1"); } });
+  }
+
+  const p = PASSOS[passo];
+  const pronto = p.pronto(s);
+  const navegar = el("div", { class: "ass-nav" }, [
+    passo > 0 ? el("button", { class: "btn btn--fantasma", onclick: () => { passo--; desenhar(); } }, [icone("arrow-left"), "Voltar"]) : el("span"),
+    el("button", { class: "btn " + (pronto || !p.obrigatorio ? "btn--primario" : "btn--secundario"), onclick: () => { passo++; desenhar(); } }, [
+      pronto ? "Próximo" : p.obrigatorio ? "Fazer depois" : "Pular", icone("arrow-right"),
+    ]),
+  ]);
+  abrirFolha([
+    el("p", { class: "ass-topo mono", texto: `Primeiros passos · ${passo + 1} de ${total}` }),
+    el("h2", { id: "folha-titulo" }, [p.titulo, el("span", { class: "ass-papel", texto: p.papel })]),
+    trilha,
+    el("p", { class: "ass-texto", texto: p.texto }),
+    pronto ? el("p", { class: "ass-pronto" }, [icone("check-circle", true), "Já está conectado. Pode seguir."]) : null,
+    p.passos && !pronto ? el("ol", { class: "ass-como" }, p.passos.map((t) => el("li", { texto: t }))) : null,
+    p.dica && !pronto ? el("p", { class: "ass-dica" }, [icone("lightbulb", true), el("span", { texto: p.dica })]) : null,
+    el("div", { class: "con-lista ass-secao" }, p.secao(s)),
+    navegar,
+  ].filter(Boolean), { aoFechar: () => { clearInterval(sondagem); modo = "lista"; localStorage.setItem(CHAVE_VISTO, "1"); } });
+}
+
+export async function abrirAssistente() {
+  await lerEstado();
+  modo = "assistente";
+  // começa no primeiro passo que ainda falta
+  const i = PASSOS.findIndex((p) => !p.pronto(estado));
+  passo = i < 0 ? PASSOS.length : i;
+  desenhar();
+}
+
+// no primeiro uso, abre sozinho se faltar algo importante (Claude ou Groq)
+export async function talvezAbrirAssistente() {
+  if (localStorage.getItem(CHAVE_VISTO)) return;
+  const s = await lerEstado();
+  if (!s || !s.podeConfigurar) return;
+  if (!prontoClaude(s) || !prontoGroq(s)) abrirAssistente();
+  else localStorage.setItem(CHAVE_VISTO, "1");
+}
+
 function desenhar() {
+  if (modo === "assistente" && estado && estado.podeConfigurar) return desenharAssistente();
   const s = estado;
   if (!s) return abrirFolha([el("h2", { id: "folha-titulo", texto: "Conectar IA" }), el("p", { class: "con-texto", texto: "Não deu para ler o estado das conexões. Tente de novo." })]);
   if (!s.podeConfigurar) {
@@ -277,6 +368,7 @@ function desenhar() {
   abrirFolha([
     el("h2", { id: "folha-titulo", texto: "Conectar IA" }),
     el("p", { class: "meta", texto: emUso }),
+    el("button", { class: "btn btn--secundario btn--bloco ass-abrir", onclick: abrirAssistente }, [icone("compass", true), "Primeiros passos (guia de 3 etapas)"]),
     el("div", { class: "con-lista" }, [secaoClaude(s), secaoGroq(s), secaoImagem(s), secaoApi(s)]),
     el("button", { class: "btn btn--secundario btn--bloco", onclick: fecharFolha }, ["Fechar"]),
     el("button", { class: "btn btn--fantasma btn--bloco", onclick: verTermo }, [icone("scroll"), "Termo de uso"]),
@@ -285,5 +377,6 @@ function desenhar() {
 
 export async function abrirConexoes() {
   await lerEstado();
+  modo = "lista";
   desenhar();
 }

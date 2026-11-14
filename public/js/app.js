@@ -1,6 +1,6 @@
 import { REDES, chipRede, redeDaUrl, redeDoNome } from "./redes.js";
 import { montarEstudio, abrirEstudo, abrirPainelIA, VISOES } from "./estudio.js";
-import { abrirConexoes, lerEstado, aoMudarConexao } from "./conexoes.js";
+import { abrirConexoes, lerEstado, aoMudarConexao, talvezAbrirAssistente } from "./conexoes.js";
 import { montarCelular } from "./celular.js";
 import { abrirExportar } from "./exportar.js";
 import { textoDoTermo, TERMO_TITULO } from "./termo.js";
@@ -205,6 +205,7 @@ function mostrarPortao(qual, primeiro = false) {
 
 function mostrarApp() {
   if (sessao && sessao.precisaTermo) return mostrarPortao("termo");
+  setTimeout(talvezAbrirAssistente, 700); // primeiro uso: guia para conectar as contas
   lerEstado();
   montarCelular();
   $("#portao").hidden = true;
