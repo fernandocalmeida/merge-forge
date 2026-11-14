@@ -8,7 +8,7 @@ Criado pela **[Merge IA](https://mergeia.com.br)**, engenharia de IA, automaçã
 
 ## O que ele faz
 
-- **Capta o vídeo:** por link (YouTube, Instagram, TikTok, Facebook, X e outros sites suportados pelo yt-dlp) ou enviando o arquivo do computador/celular (até 2 GB), com porcentagem real do andamento.
+- **Capta o vídeo:** por link (YouTube, Instagram, TikTok, Facebook, X e outros sites suportados pelo yt-dlp) ou enviando o arquivo do computador (até 2 GB), com porcentagem real do andamento.
 - **Lê o que foi falado:** usa as legendas do vídeo ou transcreve o áudio com a Groq (Whisper).
 - **Gera o estudo com IA (Claude), de uma vez:**
   - Resumo com a ideia central e os pontos-chave
@@ -20,7 +20,7 @@ Criado pela **[Merge IA](https://mergeia.com.br)**, engenharia de IA, automaçã
 - **Infográfico ilustrado:** um pôster completo desenhado pelo gerador de imagens do ChatGPT (via Codex na sua conta).
 - **Apostila de estudo em PDF:** capa, sumário clicável, aulas com cenas do próprio vídeo, diagramas, exercícios com gabarito e links que abrem o vídeo no minuto certo. Sem custo extra de IA.
 - **Baixar tudo:** cada material em arquivo aberto (PDF, Markdown, CSV para o Anki, SRT, TXT, PNG) ou tudo num ZIP.
-- **App no celular:** instala como aplicativo (PWA), com visual escuro premium.
+- **Roda no seu computador (Windows):** com atalho na área de trabalho, visual escuro premium e seus vídeos guardados só na sua máquina. Não há versão para celular: baixar vídeos e rodar a IA exigem um computador.
 
 ## Como funciona o custo
 
