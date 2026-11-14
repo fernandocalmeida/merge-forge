@@ -1,6 +1,6 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { createReadStream, createWriteStream, existsSync, readFileSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { readdir, stat, unlink, writeFile, rename, mkdir, readFile } from "node:fs/promises";
 import { createHmac, timingSafeEqual, scryptSync, randomBytes } from "node:crypto";
 import path from "node:path";
@@ -221,14 +221,21 @@ function baixarVideo(url, qualidade = "720", aoProgredir = () => {}) {
       "--no-playlist",
       // progresso linha a linha: PCT|45.3%|2.1MiB/s|00:42|<formato> (stdout) e POS|<etapa> (stderr)
       "--newline", "--progress",
+      // o yt-dlp.exe "empacotado" (winget) ignora PYTHONUTF8: sem isto, títulos com acento ou "："
+      // saíam com o nome errado e a ficha do vídeo (.meta.json) não casava com o arquivo
+      "--encoding", "utf-8",
       "--progress-template", "download:PCT|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(info.format_id)s",
       "--progress-template", "postprocess:POS|%(progress.postprocessor)s",
       "-o", padrao,
-      // imprime o caminho final exato depois de mesclar/mover: assim nunca pegamos o arquivo errado
-      "--print", "after_move:filepath",
+      // imprime o id e o caminho final depois de mesclar/mover (ARQ|<id>|<caminho>)
+      "--print", "after_move:ARQ|%(id)s|%(filepath)s",
       "--",
       url,
-    ]);
+    ], {
+      windowsHide: true,
+      // Sem buffer: a porcentagem chega na hora, em vez de aparecer atrasada e pular para o fim.
+      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1", PYTHONUNBUFFERED: "1" },
+    });
     let saida = "";
     let erro = "";
     // vídeo e áudio vêm em arquivos separados (o vídeo pesa ~90%); depois o yt-dlp junta os dois
@@ -264,13 +271,31 @@ function baixarVideo(url, qualidade = "720", aoProgredir = () => {}) {
       if (resto && !linhaProgresso(resto)) saida += resto;
       if (sinal === "SIGKILL") return reject(new Error("o download demorou demais e foi cancelado"));
       if (code !== 0) return reject(new Error(erro.trim().split("\n").filter((l) => /ERROR/i.test(l)).pop() || erro.slice(-400) || `yt-dlp saiu com codigo ${code}`));
-      const caminho = saida.trim().split(/\r?\n/).filter(Boolean).pop();
-      if (!caminho) return reject(new Error("o video passou do tamanho maximo ou nao foi baixado"));
-      const nome = path.basename(caminho);
-      if (!dentroDe(DOWNLOADS_DIR, nome)) return reject(new Error("caminho inesperado do arquivo"));
+      const linha = saida.split(/\r?\n/).filter((l) => l.startsWith("ARQ|")).pop();
+      // sem a linha ARQ o yt-dlp pulou o download sem avisar: quase sempre é o limite de tamanho
+      if (!linha) return reject(new Error(`o vídeo não foi baixado. O mais comum é ele passar do tamanho máximo permitido (${TAMANHO_MAX}): tente uma qualidade menor.`));
+      const [, idVideo = "", caminho = ""] = linha ? linha.split("|") : [];
+      const nome = arquivoBaixado(path.basename(caminho.trim()), idVideo.trim(), q.sufixo);
+      if (!nome) return reject(new Error("o download terminou, mas o arquivo do vídeo não apareceu na pasta. Tente de novo ou escolha outra qualidade."));
       resolve(nome);
     });
   });
+}
+
+// Confere que o arquivo baixado existe de verdade e não está vazio. Se o nome que o yt-dlp
+// informou não bater (codificação, caractere trocado), procura pelo id do vídeo + qualidade.
+function arquivoBaixado(nome, idVideo, sufixo) {
+  const valido = (n) => {
+    const c = n && dentroDe(DOWNLOADS_DIR, n);
+    if (!c || !EXT_VIDEO.has(path.extname(n).toLowerCase())) return false;
+    try { return statSync(c).size > 1024; } catch { return false; }
+  };
+  if (valido(nome)) return nome;
+  if (!idVideo) return null;
+  const marca = `_${idVideo}_${sufixo}.`;
+  const achados = readdirSync(DOWNLOADS_DIR).filter((n) => n.includes(marca) && !/\.(part|ytdl|temp)$|\.f\d+\./i.test(n) && valido(n));
+  achados.sort((a, b) => statSync(path.join(DOWNLOADS_DIR, b)).mtimeMs - statSync(path.join(DOWNLOADS_DIR, a)).mtimeMs);
+  return achados[0] || null;
 }
 
 // Só analisa (sem baixar): pega título, capa e duração pra mostrar uma prévia antes do download de verdade.
