@@ -16,7 +16,8 @@
 import { spawn, execFileSync } from "node:child_process";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, readdir, readFile, rm, writeFile, rename } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile, rename, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -213,49 +214,180 @@ export function chavesGroq() {
   return [...new Set(todas)];
 }
 let groqPreferida = 0;
+// GROQ_URL só existe para testes (servidor falso local); o normal é a Groq de verdade
+const GROQ_URL = process.env.GROQ_URL || "https://api.groq.com/openai/v1";
+const GROQ_ESPERA_MAX = 3 * 60 * 1000; // uma parte de 20 min leva ~10 s; 3 min sem resposta = travou
+
+// Quanto a Groq pede para esperar depois de um 429 (cabeçalho retry-after ou "try again in 7m12s")
+function esperaDoLimite(r, corpo) {
+  const cab = Number(r.headers.get("retry-after"));
+  if (cab > 0) return Math.ceil(cab);
+  const m = /try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?/i.exec(corpo || "");
+  if (m && (m[1] || m[2] || m[3])) return Math.ceil((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0));
+  return 60;
+}
 
 async function enviarParaGroq(form) {
   const chaves = chavesGroq();
   let ultimoErro = null;
+  let esperaMin = null; // menor espera pedida entre as chaves que bateram no limite
   for (let n = 0; n < chaves.length; n++) {
     const i = (groqPreferida + n) % chaves.length;
-    const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { authorization: "Bearer " + chaves[i] },
-      body: form,
-    });
+    let r;
+    try {
+      r = await fetch(GROQ_URL + "/audio/transcriptions", {
+        method: "POST",
+        headers: { authorization: "Bearer " + chaves[i] },
+        body: form,
+        signal: AbortSignal.timeout(GROQ_ESPERA_MAX),
+      });
+    } catch (e) {
+      const tempo = e && (e.name === "TimeoutError" || e.name === "AbortError");
+      throw Object.assign(new Error(tempo
+        ? "a Groq (que transcreve o áudio) não respondeu em 3 minutos"
+        : "sem conexão com a Groq (que transcreve o áudio): confira a internet"), { rede: true });
+    }
     if (r.ok) { groqPreferida = i; return r.json(); }
-    ultimoErro = `Groq ${r.status}: ${(await r.text()).slice(0, 160)}`;
+    const corpo = await r.text();
+    ultimoErro = `Groq ${r.status}: ${corpo.slice(0, 160)}`;
+    if (r.status === 429) { const s = esperaDoLimite(r, corpo); esperaMin = esperaMin === null ? s : Math.min(esperaMin, s); }
     // limite de uso ou chave recusada: tenta a próxima; outros erros param aqui
     if (![401, 403, 429].includes(r.status)) break;
     console.warn(`groq: chave ${i + 1} de ${chaves.length} recusou (${r.status}), tentando a próxima`);
   }
+  if (esperaMin !== null) throw Object.assign(new Error("limite de uso da Groq atingido (" + ultimoErro + ")"), { limite: true, esperaS: esperaMin });
   throw new Error("a transcricao falhou (" + ultimoErro + ")");
 }
 
-async function transcreverAudio(cfg, arquivo, pasta, aoProgredir) {
+const minutos = (s) => (s < 90 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`);
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Extrai o áudio em partes de 20 min com progresso real (ffmpeg -progress) e um vigia:
+// se o ffmpeg ficar 3 min sem avançar, ele é parado com uma mensagem clara.
+function extrairAudio(cfg, arquivo, pastaPartes, duracao, aoAvancar) {
+  return new Promise((resolve, reject) => {
+    // mono, 16 kHz, opus 32 kbps: ~14 MB por hora; partes de 20 min ficam bem abaixo do limite de 25 MB
+    const p = iniciarProcesso(cfg.ffmpeg, [
+      "-nostdin", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats",
+      "-i", arquivo, "-map", "0:a:0",
+      "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "32k",
+      "-f", "segment", "-segment_time", String(PARTE_S), "-reset_timestamps", "1",
+      path.join(pastaPartes, "parte_%03d.ogg"),
+    ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let erro = "", resto = "", ultimoAvanco = Date.now(), ultimoT = -1, motivo = null;
+    // limite total generoso (PC lento); o vigia de "parado" é quem pega travamento de verdade
+    const limiteTotal = Math.max(20 * 60, (duracao || 0) * 0.6) * 1000;
+    const inicio = Date.now();
+    const vigia = setInterval(() => {
+      if (Date.now() - ultimoAvanco > 3 * 60 * 1000) motivo = "o preparo do áudio parou de avançar por 3 minutos";
+      else if (Date.now() - inicio > limiteTotal) motivo = `o preparo do áudio passou de ${minutos(limiteTotal / 1000)}`;
+      if (motivo) { clearInterval(vigia); p.kill("SIGKILL"); }
+    }, 5000);
+    p.stdout.on("data", (d) => {
+      resto += d.toString();
+      const linhas = resto.split(/\r?\n/);
+      resto = linhas.pop();
+      for (const l of linhas) {
+        const m = /^out_time_(?:us|ms)=(\d+)/.exec(l); // os dois vêm em microssegundos
+        if (!m) continue;
+        const t = Number(m[1]) / 1e6;
+        if (t > ultimoT) { ultimoT = t; ultimoAvanco = Date.now(); aoAvancar(t); }
+      }
+    });
+    p.stderr.on("data", (d) => (erro = (erro + d.toString()).slice(-2000)));
+    p.on("error", (e) => { clearInterval(vigia); reject(new Error(`nao consegui rodar o ffmpeg (${e.code || e.message})`)); });
+    p.on("close", (code) => {
+      clearInterval(vigia);
+      if (motivo) return reject(new Error(motivo + ". Tente de novo; se repetir, feche outros programas pesados"));
+      if (code === 0) resolve();
+      else reject(new Error("o ffmpeg falhou ao preparar o áudio: " + (erro.trim().split("\n").slice(-2).join(" ").slice(0, 300) || `codigo ${code}`)));
+    });
+  });
+}
+
+const PARTE_S = 1200; // partes de 20 min
+
+// Transcrição com retomada: as partes de áudio e o texto de cada parte ficam guardados em `cache`
+// (uma pasta por vídeo). Se cair no meio (limite da Groq, internet, app fechado), gerar de novo
+// continua de onde parou. Quem chama apaga a pasta quando o estudo fica pronto.
+async function transcreverAudio(cfg, arquivo, cache, duracao, aoProgredir) {
   if (!chavesGroq().length) return null;
-  // mono, 16 kHz, opus 32 kbps: ~14 MB por hora; partes de 20 min ficam bem abaixo do limite de 25 MB
-  await rodar(cfg.ffmpeg, [
-    "-hide_banner", "-loglevel", "error", "-i", arquivo,
-    "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-b:a", "32k",
-    "-f", "segment", "-segment_time", "1200", "-reset_timestamps", "1",
-    path.join(pasta, "parte_%03d.ogg"),
-  ], { timeoutMs: 20 * 60 * 1000 });
-  const partes = (await readdir(pasta)).filter((f) => f.startsWith("parte_")).sort();
+  const totalEst = duracao > 0 ? Math.max(1, Math.ceil(duracao / PARTE_S)) : 0;
+  const PREPARO = 0.15; // fatia da barra (dentro da etapa de áudio) para o preparo
+  mkdirSync(cache, { recursive: true });
+  const marca = path.join(cache, "audio-pronto.json");
+  if (!existsSync(marca)) {
+    const pastaPartes = path.join(cache, "partes");
+    await rm(pastaPartes, { recursive: true, force: true }).catch(() => {});
+    mkdirSync(pastaPartes, { recursive: true });
+    aoProgredir(totalEst ? `Preparando o áudio (parte 1 de ${totalEst})` : "Preparando o áudio", 0, 0);
+    let ultimaTela = 0;
+    await extrairAudio(cfg, arquivo, pastaPartes, duracao, (t) => {
+      if (Date.now() - ultimaTela < 1000) return;
+      ultimaTela = Date.now();
+      if (totalEst) {
+        const parte = Math.min(totalEst, Math.floor(t / PARTE_S) + 1);
+        aoProgredir(`Preparando o áudio (parte ${parte} de ${totalEst})`, PREPARO * Math.min(1, t / duracao), 0);
+      } else aoProgredir(`Preparando o áudio (${minutos(t)} de vídeo prontos)`, 0, 0);
+    });
+    const partes = (await readdir(pastaPartes)).filter((f) => f.startsWith("parte_")).sort();
+    await writeFile(marca, JSON.stringify({ partes }));
+  }
+  const { partes } = JSON.parse(await readFile(marca, "utf8"));
   const pedacos = [];
   for (let i = 0; i < partes.length; i++) {
-    aoProgredir(`Transcrevendo o áudio (parte ${i + 1} de ${partes.length})`, 0.1 + (0.9 * i) / partes.length, 0.9 / partes.length);
-    const dados = await readFile(path.join(pasta, partes[i]));
-    const form = new FormData();
-    form.append("file", new Blob([dados], { type: "audio/ogg" }), partes[i]);
-    form.append("model", "whisper-large-v3-turbo");
-    form.append("response_format", "verbose_json");
-    const d = await enviarParaGroq(form);
-    for (const s of d.segments || []) pedacos.push({ inicio: i * 1200 + (s.start || 0), texto: s.text || "" });
+    const base = PREPARO + ((1 - PREPARO) * i) / partes.length;
+    const passo = (1 - PREPARO) / partes.length;
+    const pronto = path.join(cache, `texto_${String(i).padStart(3, "0")}.json`);
+    let d;
+    if (existsSync(pronto)) d = JSON.parse(await readFile(pronto, "utf8")); // já transcrita antes
+    else {
+      const dados = await readFile(path.join(cache, "partes", partes[i]));
+      for (let tentativa = 1; ; tentativa++) {
+        aoProgredir(`Transcrevendo o áudio (parte ${i + 1} de ${partes.length})`, base, passo);
+        const form = new FormData();
+        form.append("file", new Blob([dados], { type: "audio/ogg" }), partes[i]);
+        form.append("model", "whisper-large-v3-turbo");
+        form.append("response_format", "verbose_json");
+        try { d = await enviarParaGroq(form); break; } catch (e) {
+          // limite por hora da Groq (o plano grátis transcreve ~2 h de áudio por hora): espera e continua
+          if (e.limite && e.esperaS <= 20 * 60 && tentativa <= 3) {
+            const ate = Date.now() + (e.esperaS + 3) * 1000;
+            console.warn(`groq: limite atingido na parte ${i + 1} de ${partes.length}, esperando ${e.esperaS} s`);
+            while (Date.now() < ate) {
+              aoProgredir(`Limite de uso da Groq atingido: continuo sozinho em ${minutos((ate - Date.now()) / 1000)} (parte ${i + 1} de ${partes.length})`, base, 0);
+              await dormir(Math.min(15000, ate - Date.now()));
+            }
+            continue;
+          }
+          const guardado = i ? `${i} de ${partes.length} partes já transcritas ficaram guardadas` : "o áudio já preparado ficou guardado";
+          if (e.limite) throw new Error(`a Groq (que transcreve o áudio) atingiu o limite de uso e pediu ${minutos(e.esperaS)} de pausa. Nada se perdeu: ${guardado}. Clique em gerar de novo depois disso que ele continua de onde parou`);
+          if (e.rede && tentativa < 2) continue; // uma nova tentativa para falha de rede
+          if (e.rede) throw new Error(`${e.message}. Nada se perdeu: ${guardado}. Clique em gerar de novo que ele continua de onde parou`);
+          throw e;
+        }
+      }
+      await writeFile(pronto, JSON.stringify({ segments: (d.segments || []).map((s) => ({ start: s.start, text: s.text })), language: d.language }));
+    }
+    for (const s of d.segments || []) pedacos.push({ inicio: i * PARTE_S + (s.start || 0), texto: s.text || "" });
   }
   const blocos = agrupar(pedacos);
   return blocos.length ? blocos : null;
+}
+
+// pasta de retomada da transcrição de um vídeo (fora de downloads, para não aparecer na lista)
+const PASTA_AUDIO = path.join(tmpdir(), "merge-forge-audio");
+function cacheDoAudio(destino) {
+  return path.join(PASTA_AUDIO, createHash("sha1").update(String(destino)).digest("hex").slice(0, 16));
+}
+// partes guardadas de estudos abandonados somem depois de 3 dias
+async function limparCachesVelhos() {
+  try {
+    for (const d of await readdir(PASTA_AUDIO)) {
+      const s = await stat(path.join(PASTA_AUDIO, d)).catch(() => null);
+      if (s && Date.now() - s.mtimeMs > 3 * 24 * 3600 * 1000) await rm(path.join(PASTA_AUDIO, d), { recursive: true, force: true }).catch(() => {});
+    }
+  } catch { /* pasta ainda não existe */ }
 }
 
 // ---------- 3) IA gera o estudo ----------
@@ -494,6 +626,7 @@ export function criarEstudos(cfg) {
     return pronto;
   }
   redetectar();
+  limparCachesVelhos();
 
   async function processar(job) {
     const { nome, caminho, meta, destino } = job;
@@ -505,8 +638,9 @@ export function criarEstudos(cfg) {
       let transcricao = meta.url ? await legendas(cfg, meta.url, pasta) : null;
       let fonte = transcricao ? "legendas" : null;
       if (!transcricao) {
-        atualizar("transcrevendo", "Preparando o áudio", { faixa: [5, 55], base: 0, passo: 0.1, previsto: Math.max(5, duracao / 40) });
-        transcricao = await transcreverAudio(cfg, caminho, pasta, (etapa, base, passo) => atualizar("transcrevendo", etapa, { faixa: [5, 55], base, passo, previsto: 30 }));
+        atualizar("transcrevendo", "Preparando o áudio", { faixa: [5, 55], base: 0, passo: 0 });
+        // duração real (meta) ou nenhuma: sem ela o preparo mostra minutos prontos em vez de "parte X de Y"
+        transcricao = await transcreverAudio(cfg, caminho, cacheDoAudio(destino), Number(meta.duracao) || 0, (etapa, base, passo) => atualizar("transcrevendo", etapa, { faixa: [5, 55], base, passo, previsto: 30 }));
         fonte = transcricao ? "audio" : null;
       }
       if (!transcricao && provedor === "demo") { transcricao = []; fonte = "demo"; }
@@ -530,6 +664,7 @@ export function criarEstudos(cfg) {
       const final = { ...validar(estudo), transcricao, fonte, provedor, modelo: provedor === "demo" ? null : provedor === "claude-cli" ? (cfg.modeloCli || "padrão do Claude Code") : cfg.modelo, geradoEm: new Date().toISOString() };
       await writeFile(destino + ".tmp", JSON.stringify(final));
       await rename(destino + ".tmp", destino);
+      await rm(cacheDoAudio(destino), { recursive: true, force: true }).catch(() => {}); // pronto: a retomada não serve mais
       jobs.delete(nome);
     } catch (e) {
       console.error("estudo falhou:", nome, e);
