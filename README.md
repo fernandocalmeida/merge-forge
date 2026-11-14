@@ -36,11 +36,13 @@ Alternativas pagas por uso: chave da API da Anthropic e chave da API da OpenAI.
 
 ## Requisitos
 
-- **Node.js 18 ou mais novo**
-- **yt-dlp** e **ffmpeg** (download e processamento de vídeo)
+- **Node.js 20 ou mais novo**
+- **yt-dlp**, **Deno** (o YouTube exige para liberar os vídeos) e **ffmpeg**
 - **Claude Code** (`npm install -g @anthropic-ai/claude-code`) logado na sua conta Claude
 - **Google Chrome** (para gerar a apostila em PDF)
 - Opcional: **Codex** (`npm install -g @openai/codex`) para o infográfico
+
+No Windows, o instalador confere e instala tudo isso sozinho.
 
 ## Instalação
 
@@ -53,8 +55,10 @@ Alternativas pagas por uso: chave da API da Anthropic e chave da API da OpenAI.
    powershell -ExecutionPolicy Bypass -File .\instalar-windows.ps1
    ```
 
-   O instalador confere e instala o que faltar (Node, yt-dlp, ffmpeg e Claude Code), prepara o app, coloca no início do Windows e abre no navegador em `http://localhost:8798`.
-3. No app, toque em **Conectar IA** e conecte as suas contas.
+   O instalador confere e instala o que faltar (Node, yt-dlp, Deno, ffmpeg, Google Chrome, Claude Code e Codex), prepara o app, coloca no início do Windows e abre no navegador em `http://localhost:8798`.
+
+   Só quer experimentar, sem iniciar junto com o Windows? Use `-SemInicializacao` (e, se quiser, `-Porta 8799`). Para ligar de novo depois, clique duas vezes em `ligar.vbs`.
+3. No app, aceite o termo de uso e toque em **Conectar IA** para conectar as suas contas.
 
 Para desinstalar: `powershell -ExecutionPolicy Bypass -File .\desinstalar-windows.ps1` (não apaga os vídeos nem as suas configurações).
 
