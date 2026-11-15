@@ -65,10 +65,10 @@ export async function abrirExportar(nome, titulo) {
     barra.replaceChildren(
       unico
         ? el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixar(url(nome, unico), porId[unico].rotulo) }, [
-          icone("download-simple", true), el("span", { texto: `Baixar 1 arquivo · ${porId[unico].geraNaHora ? "gera na hora" : tamanho(total)}` }),
+          icone("download-simple", true), el("span", { class: "exp-sel-rotulo" }, ["Baixar 1 arquivo", el("small", { texto: porId[unico].geraNaHora ? "gera na hora" : tamanho(total) })]),
         ])
         : el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixar(url(nome, "tudo", "&itens=" + encodeURIComponent([...marcados].join(","))), `${marcados.size} itens em ZIP`) }, [
-          icone("file-zip", true), el("span", { texto: `Baixar ${marcados.size} em ZIP · ${tamanho(total)}` }),
+          icone("file-zip", true), el("span", { class: "exp-sel-rotulo" }, [`Baixar ${marcados.size} em ZIP`, el("small", { texto: tamanho(total) })]),
         ]),
       el("button", { class: "btn btn--fantasma", onclick: () => { marcados.clear(); lista.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = false; }); atualizarBarra(); } }, ["Limpar"]),
     );

@@ -733,7 +733,10 @@ body[data-offline="1"] .faixa-offline { display: flex; animation: subir .5s var(
 .exp-check { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; margin: 0; }
 .exp-sel { position: sticky; bottom: 0; z-index: 2; display: flex; gap: var(--s-2); padding: var(--s-3) 0; margin-bottom: var(--s-2); background: var(--surface-solid); box-shadow: 0 -14px 20px -6px var(--surface-solid); animation: entrar .25s var(--ease); }
 .exp-sel .btn { white-space: nowrap; }
-.exp-sel .btn--primario { flex: 1; }
+.exp-sel .btn--primario { flex: 1; min-width: 0; padding: 0 var(--s-3); }
+.exp-sel-rotulo { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.15; }
+.exp-sel-rotulo small { font-size: .74em; font-weight: 500; opacity: .75; }
+.exp-sel .btn--fantasma { padding: 0 var(--s-3); }
 
 /* porcentagem: botão principal que se enche e barra do estudo/infográfico */
 .cta-progresso { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; width: 0; background: rgba(255, 255, 255, .28); transition: width .45s var(--ease); pointer-events: none; }
