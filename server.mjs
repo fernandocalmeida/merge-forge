@@ -2,13 +2,14 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { readdir, stat, unlink, writeFile, rename, mkdir, readFile } from "node:fs/promises";
-import { createHmac, timingSafeEqual, scryptSync, randomBytes } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { calcularProgresso, criarEstudos, statusClaude, testarTokenClaude, testarChaveApi, testarChaveGroq, chavesGroq, criarInfograficos, chaveImagem, codexConectado, codexStatus, iniciarLoginCodex, sairCodex, verificarCodex, testarChaveGemini, testarChaveOpenAI } from "./ia.mjs";
+import { calcularProgresso, criarEstudos, motivoSemApostila, statusClaude, testarTokenClaude, testarChaveApi, testarChaveGroq, chavesGroq, criarInfograficos, chaveImagem, codexConectado, codexStatus, iniciarLoginCodex, sairCodex, verificarCodex, testarChaveGemini, testarChaveOpenAI } from "./ia.mjs";
 import { criarConfig } from "./config.mjs";
-import { itensExportaveis, enviarZip, disposicao, nomeSeguro, tamanhoAproximado } from "./exportar.mjs";
+import { itensExportaveis, enviarZip, disposicao, nomeSeguro, tamanhoAproximado, legendasSrt } from "./exportar.mjs";
 import { gerarApostila } from "./apostila.mjs";
+import { criarLegendagem, fichaLegendado } from "./legendar.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -129,6 +130,32 @@ function redeDaUrl(link) {
   return "video";
 }
 
+// Link de página (busca, canal, perfil, playlist) em vez de UM vídeo: o yt-dlp tentaria baixar a página
+// inteira (dezenas de vídeos) e a tela ficaria parada em 0%. Devolve a explicação, ou null se é um vídeo.
+function linkNaoEhVideo(link) {
+  let u;
+  try { u = new URL(link); } catch { return null; }
+  const host = u.hostname.toLowerCase();
+  const p = u.pathname.toLowerCase();
+  const eh = (...dominios) => dominios.some((d) => host === d || host.endsWith("." + d));
+  const dica = (onde) => `esse link é de ${onde}, não de um vídeo. Abra o vídeo que você quer e copie o link dele (botão Compartilhar > Copiar link)`;
+  if (eh("youtube.com")) {
+    if (p.startsWith("/results")) return dica("uma busca do YouTube");
+    if (/^\/(watch|shorts\/|live\/|embed\/|v\/)/.test(p)) return null;
+    if (p.startsWith("/playlist")) return dica("uma playlist do YouTube");
+    return dica("uma página do YouTube (canal ou início)");
+  }
+  if (eh("instagram.com")) {
+    if (/^\/(p|reel|reels|tv|stories|share)\//.test(p) || /^\/[^/]+\/(p|reel)\//.test(p)) return null;
+    return dica("um perfil ou página do Instagram");
+  }
+  if (eh("tiktok.com")) {
+    if (eh("vm.tiktok.com", "vt.tiktok.com") || /\/(video|photo)\//.test(p) || p.startsWith("/t/")) return null;
+    return dica("um perfil ou busca do TikTok");
+  }
+  return null;
+}
+
 function dataHoje() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
@@ -195,6 +222,8 @@ const estudos = criarEstudos({
   modelo: process.env.MODELO_IA || "claude-opus-5-5",     // API: modelo usado
   modeloCli: process.env.MODELO_IA || null,                // login do Claude: padrão da instalação, se não escolher
 });
+
+const legendagem = criarLegendagem({ ffmpeg: process.env.FFMPEG || "ffmpeg" });
 
 // ---------- download ----------
 let emAndamento = 0;
@@ -369,6 +398,9 @@ const arquivoMeta = (nome) => path.join(DOWNLOADS_DIR, baseDe(nome) + ".meta.jso
 const arquivoEstudo = (nome) => path.join(DOWNLOADS_DIR, baseDe(nome) + ".estudo.json");
 // imagens dos quadros: <base>.quadro-1.jpg, <base>.quadro-2.jpg...
 const prefixoQuadro = (nome) => path.join(DOWNLOADS_DIR, baseDe(nome) + ".quadro-");
+// vídeo com a legenda em português gravada: <base>.legendado.mp4 (não aparece na biblioteca)
+const arquivoLegendado = (nome) => path.join(DOWNLOADS_DIR, baseDe(nome) + ".legendado.mp4");
+const ehDerivado = (nome) => /\.legendado\.mp4(\.parcial\.mp4)?$/i.test(nome);
 
 async function lerJson(caminho) {
   try { return JSON.parse(await readFile(caminho, "utf8")); } catch { return null; }
@@ -386,6 +418,8 @@ async function garantirApostila(nome) {
   if (!caminho || !existsSync(caminho)) throw Object.assign(new Error("arquivo nao encontrado"), { status: 404 });
   const estudoArq = arquivoEstudo(nome);
   if (!existsSync(estudoArq)) throw Object.assign(new Error("gere o estudo com IA primeiro"), { status: 409 });
+  const bloqueio = motivoSemApostila(await lerJson(estudoArq));
+  if (bloqueio) throw Object.assign(new Error(bloqueio), { status: 409 });
   const pdf = arquivoApostila(nome);
   const imgPng = `${prefixoQuadro(nome)}1.png`, imgJpg = `${prefixoQuadro(nome)}1.jpg`;
   const imagemInfo = existsSync(imgPng) ? imgPng : existsSync(imgJpg) ? imgJpg : null;
@@ -439,23 +473,73 @@ function completarMeta(nome) {
   }).catch(() => {});
 }
 
+// Vídeo do YouTube sem ficha (.meta.json): aconteceu quando um link de busca baixou vários vídeos sozinho,
+// e quando o Windows trocou o ":" do título no nome do arquivo. O código do vídeo está no próprio nome
+// (…_<11 caracteres>_720p.mp4): recria a ficha com o link e deixa o completarMeta buscar título e capa.
+const RE_ID_YOUTUBE = /^\d{8}_youtube_.*_([A-Za-z0-9_-]{11})_(?:\d{3,4}p|audio)\.[a-z0-9]+$/i;
+async function fichaRecriada(nome) {
+  const m = RE_ID_YOUTUBE.exec(nome);
+  if (!m) return null;
+  const meta = { url: "https://www.youtube.com/watch?v=" + m[1], rede: "youtube", titulo: null, canal: null, thumb: null, duracao: null, recriada: true };
+  try { await writeFile(arquivoMeta(nome), JSON.stringify(meta), { flag: "wx" }); } catch { return null; } // "wx": nunca sobrescreve
+  completarMeta(nome);
+  return meta;
+}
+
+// Capa tirada do próprio vídeo (um quadro), para quem não tem capa da rede (arquivo enviado, rede sem capa).
+// Fica guardada em dados/capas e é refeita se o vídeo mudar.
+const PASTA_CAPAS = path.join(DADOS_DIR, "capas");
+const arquivoCapa = (nome) => path.join(PASTA_CAPAS, createHash("sha1").update(nome).digest("hex").slice(0, 20) + ".jpg");
+const fazendoCapa = new Map();
+let capasRodando = 0;
+async function capaDoVideo(nome, caminho, duracao) {
+  const destino = arquivoCapa(nome);
+  const sv = await stat(caminho);
+  const sc = await stat(destino).catch(() => null);
+  if (sc && sc.size > 0 && sc.mtimeMs >= sv.mtimeMs) return destino;
+  if (fazendoCapa.has(nome)) return fazendoCapa.get(nome);
+  const tarefa = (async () => {
+    while (capasRodando >= 2) await new Promise((r) => setTimeout(r, 200)); // no máximo 2 ffmpeg de capa por vez
+    capasRodando++;
+    try {
+      await mkdir(PASTA_CAPAS, { recursive: true });
+      const t = duracao > 0 ? Math.min(30, duracao * 0.1) : 3;
+      const ok = await new Promise((resolve) => {
+        const p = spawn(process.env.FFMPEG || "ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-ss", String(t), "-i", caminho,
+          "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "5", destino + ".tmp.jpg"], { stdio: "ignore", windowsHide: true });
+        const limite = setTimeout(() => p.kill("SIGKILL"), 30000);
+        p.on("error", () => { clearTimeout(limite); resolve(false); });
+        p.on("close", (c) => { clearTimeout(limite); resolve(c === 0); });
+      });
+      if (!ok || !existsSync(destino + ".tmp.jpg")) { await unlink(destino + ".tmp.jpg").catch(() => {}); return null; }
+      await rename(destino + ".tmp.jpg", destino);
+      return destino;
+    } finally { capasRodando--; fazendoCapa.delete(nome); }
+  })();
+  fazendoCapa.set(nome, tarefa);
+  return tarefa;
+}
+
 async function listarDownloads() {
   const arquivos = await readdir(DOWNLOADS_DIR);
   const nomes = new Set(arquivos);
   const itens = await Promise.all(
     arquivos
-      .filter((nome) => EXT_VIDEO.has(path.extname(nome).toLowerCase()))
+      .filter((nome) => EXT_VIDEO.has(path.extname(nome).toLowerCase()) && !ehDerivado(nome))
       .map(async (nome) => {
         const s = await stat(path.join(DOWNLOADS_DIR, nome));
-        const meta = (await lerJson(arquivoMeta(nome))) || {};
+        const meta = (await lerJson(arquivoMeta(nome))) || (await fichaRecriada(nome)) || {};
+        const audio = EXT_AUDIO.has(path.extname(nome).toLowerCase());
+        // sem capa da rede: usa um quadro do próprio vídeo (a tela troca por um ícone se não der)
+        const capaPropria = !meta.thumb && !audio ? "/api/capa?nome=" + encodeURIComponent(nome) : null;
         return {
           nome,
           mtime: s.mtimeMs,
           tamanhoMB: (s.size / 1024 / 1024).toFixed(1),
-          audio: EXT_AUDIO.has(path.extname(nome).toLowerCase()),
+          audio,
           titulo: meta.titulo || null,
           canal: meta.canal || null,
-          thumb: meta.thumb || null,
+          thumb: meta.thumb || capaPropria,
           duracao: meta.duracao || null,
           rede: meta.rede || null,
           temEstudo: (meta.url && (!meta.titulo || !meta.thumb) && completarMeta(nome), nomes.has(baseDe(nome) + ".estudo.json")),
@@ -652,6 +736,7 @@ const servidor = http.createServer(async (req, res) => {
     if (rota === "/api/info" && req.method === "POST") {
       const { url: link } = await lerCorpo(req);
       if (!link || !/^https?:\/\//i.test(link)) return json(res, 400, { ok: false, erro: "link invalido" });
+      if (linkNaoEhVideo(link)) return json(res, 200, { ok: false, erro: linkNaoEhVideo(link) });
       // a prévia roda a cada link colado: limita pra não abrir dezenas de yt-dlp ao mesmo tempo
       if (emAnalise >= 3) return json(res, 429, { ok: false, erro: "muitas analises ao mesmo tempo" });
       emAnalise++;
@@ -675,6 +760,7 @@ const servidor = http.createServer(async (req, res) => {
     if (rota === "/api/baixar" && req.method === "POST") {
       const { url: link, qualidade, info } = await lerCorpo(req);
       if (!link || !/^https?:\/\//i.test(link)) return json(res, 400, { ok: false, erro: "link invalido" });
+      if (linkNaoEhVideo(link)) return json(res, 400, { ok: false, erro: linkNaoEhVideo(link) });
       if (qualidade && !QUALIDADES[qualidade]) return json(res, 400, { ok: false, erro: "qualidade invalida" });
       if (emAndamento >= MAX_SIMULTANEOS) return json(res, 429, { ok: false, erro: "ja tem downloads em andamento, tenta de novo em instantes" });
       emAndamento++;
@@ -759,14 +845,30 @@ const servidor = http.createServer(async (req, res) => {
       const nome = decodeURIComponent(rota.slice("/api/downloads/".length));
       const caminho = arquivoDoNome(nome);
       if (!caminho || !existsSync(caminho)) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
-      if (estudos.emAndamento(nome)) return json(res, 409, { ok: false, erro: "esse video esta sendo estudado agora, espera terminar" });
+      // estudo em andamento: cancela primeiro (mata ffmpeg/claude que estejam usando o arquivo) e apaga em seguida
+      if (estudos.emAndamento(nome)) await estudos.cancelar(nome);
       await unlink(caminho);
       await unlink(arquivoMeta(nome)).catch(() => {});
       await unlink(arquivoEstudo(nome)).catch(() => {});
       await unlink(arquivoApostila(nome)).catch(() => {});
+      await unlink(arquivoLegendado(nome)).catch(() => {});
+      await unlink(fichaLegendado(arquivoLegendado(nome))).catch(() => {});
       await unlink(path.join(DOWNLOADS_DIR, baseDe(nome) + ".apostila.pdf")).catch(() => {});
       for (let i = 1; i <= 8; i++) for (const x of [".jpg", ".png"]) await unlink(`${prefixoQuadro(nome)}${i}${x}`).catch(() => {});
+      await unlink(arquivoCapa(nome)).catch(() => {});
       return json(res, 200, { ok: true });
+    }
+
+    // GET /api/capa?nome= → um quadro do próprio vídeo como capa (para quem não tem capa da rede)
+    if (rota === "/api/capa" && req.method === "GET") {
+      const nome = url.searchParams.get("nome") || "";
+      const caminho = arquivoDoNome(nome);
+      if (!caminho || !existsSync(caminho) || EXT_AUDIO.has(path.extname(nome).toLowerCase())) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
+      const meta = (await lerJson(arquivoMeta(nome))) || {};
+      const capa = await capaDoVideo(nome, caminho, Number(meta.duracao) || 0).catch(() => null);
+      if (!capa) return json(res, 404, { ok: false, erro: "nao deu para tirar a capa" });
+      res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=86400" });
+      return createReadStream(capa).pipe(res);
     }
 
     // ---------- estudo com IA (resumo, mapa mental, organograma, infográfico, linha do tempo) ----------
@@ -811,29 +913,30 @@ const servidor = http.createServer(async (req, res) => {
       const imgPng = `${prefixoQuadro(nome)}1.png`, imgJpg = `${prefixoQuadro(nome)}1.jpg`;
       const imagemInfo = estudo && estudo.poster && estudo.poster.imagem ? (existsSync(imgPng) ? imgPng : existsSync(imgJpg) ? imgJpg : null) : null;
       const titulo = (estudo && estudo.titulo) || (meta && meta.titulo) || baseDe(nome);
-      const itens = itensExportaveis(estudo, { video, imagemInfo, titulo });
+      const videoLegendado = existsSync(arquivoLegendado(nome)) && !legendagem.emAndamento(nome) ? arquivoLegendado(nome) : null;
+      const itens = itensExportaveis(estudo, { video, imagemInfo, titulo, videoLegendado });
       const pasta = nomeSeguro(titulo, 60);
 
       if (item === "lista") {
         const lista = Object.entries(itens).map(([id, it]) => ({ id, rotulo: it.rotulo, arquivo: it.arquivo, tamanho: tamanhoAproximado({ [id]: it }) }));
         if (estudo) {
           const pdfExiste = existsSync(arquivoApostila(nome));
-          lista.unshift({ id: "apostila", rotulo: "Apostila de estudo (PDF)", arquivo: "Apostila de estudo.pdf", tamanho: pdfExiste ? (await stat(arquivoApostila(nome))).size : 0, geraNaHora: !pdfExiste });
+          lista.unshift({ id: "apostila", rotulo: "Apostila Técnica Interativa", arquivo: "Apostila Técnica Interativa.pdf", tamanho: pdfExiste ? (await stat(arquivoApostila(nome))).size : 0, geraNaHora: !pdfExiste, bloqueada: motivoSemApostila(estudo) });
         }
-        return json(res, 200, { ok: true, temEstudo: !!estudo, itens: lista, totalZip: tamanhoAproximado(itens), totalSemVideo: tamanhoAproximado(Object.fromEntries(Object.entries(itens).filter(([id]) => id !== "video"))) });
+        return json(res, 200, { ok: true, temEstudo: !!estudo, audio: EXT_AUDIO.has(path.extname(nome).toLowerCase()), traduzida: !!(estudo && estudo.traduzida), legendaBloqueada: estudo ? motivoSemApostila(estudo, "o vídeo legendado") : null, itens: lista, totalZip: tamanhoAproximado(itens), totalSemVideo: tamanhoAproximado(Object.fromEntries(Object.entries(itens).filter(([id]) => id !== "video" && id !== "video-legendado"))) });
       }
 
       if (item === "tudo") {
         const semVideo = url.searchParams.get("video") === "0";
         // &itens=resumo,mapa,... → só os marcados na tela
         const escolhidos = url.searchParams.get("itens") ? new Set(url.searchParams.get("itens").split(",").map((x) => x.trim()).filter(Boolean)) : null;
-        const ordem = ["apostila", "documento", "resumo", "mapa", "mapa-md", "organograma", "tempo", "perguntas", "anki", "transcricao", "legendas", "infografico", "infografico-texto", "video"];
+        const ordem = ["apostila", "documento", "resumo", "mapa", "mapa-md", "organograma", "tempo", "perguntas", "anki", "transcricao", "legendas", "transcricao-original", "legendas-original", "infografico", "infografico-texto", "video", "video-legendado"];
         // a apostila entra no ZIP completo e quando for marcada (é gerada antes, se precisar)
-        if (estudo && (!escolhidos || escolhidos.has("apostila"))) {
-          try { itens.apostila = { arquivo: "Apostila de estudo.pdf", caminho: await garantirApostila(nome) }; }
+        if (estudo && !motivoSemApostila(estudo) && (!escolhidos || escolhidos.has("apostila"))) {
+          try { itens.apostila = { arquivo: "Apostila Técnica Interativa.pdf", caminho: await garantirApostila(nome) }; }
           catch (e) { console.warn("apostila fora do ZIP:", e.message); }
         }
-        const entradas = ordem.filter((id) => itens[id] && !(semVideo && id === "video") && (!escolhidos || escolhidos.has(id))).map((id) => {
+        const entradas = ordem.filter((id) => itens[id] && !(semVideo && (id === "video" || id === "video-legendado")) && (id !== "video-legendado" || (escolhidos && escolhidos.has(id))) && (!escolhidos || escolhidos.has(id))).map((id) => {
           const it = itens[id];
           return it.caminho ? { nome: `${pasta}/${it.arquivo}`, caminho: it.caminho } : { nome: `${pasta}/${it.arquivo}`, conteudo: it.conteudo };
         });
@@ -866,7 +969,7 @@ const servidor = http.createServer(async (req, res) => {
       catch (e) { return json(res, e.status || 500, { ok: false, erro: String(e.message || e).slice(0, 300) }); }
       if (url.searchParams.has("preparar")) return json(res, 200, { ok: true, tamanho: (await stat(pdf)).size });
       const estudo = await lerJson(arquivoEstudo(nome));
-      const nomeArq = `${nomeSeguro((estudo && estudo.titulo) || baseDe(nome), 70)} - Apostila de estudo.pdf`;
+      const nomeArq = `${nomeSeguro((estudo && estudo.titulo) || baseDe(nome), 70)} - Apostila Técnica Interativa.pdf`;
       const disp = url.searchParams.has("abrir") ? disposicao(nomeArq).replace(/^attachment/, "inline") : disposicao(nomeArq);
       return await servirArquivo(req, res, pdf, "private, no-cache", { "Content-Disposition": disp });
     }
@@ -886,7 +989,7 @@ const servidor = http.createServer(async (req, res) => {
       const caminho = arquivoDoNome(nome);
       if (!caminho || !existsSync(caminho)) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
       const estudo = await lerJson(arquivoEstudo(nome));
-      if (estudo) return json(res, 200, { ok: true, estado: "pronto", estudo });
+      if (estudo) return json(res, 200, { ok: true, estado: "pronto", estudo, apostilaBloqueada: motivoSemApostila(estudo) });
       const job = estudos.estado(nome);
       if (job) return json(res, 200, { ok: true, ...job, progresso: calcularProgresso(job) });
       return json(res, 200, { ok: true, estado: "nenhum", iaConfigurada: estudos.configurado() });
@@ -972,12 +1075,67 @@ const servidor = http.createServer(async (req, res) => {
       return json(res, 404, { ok: false, erro: "nao encontrado" });
     }
 
+    // POST /api/estudo/cancelar { nome } → para o estudo (na fila ou rodando) e libera o vídeo
+    if (rota === "/api/estudo/cancelar" && req.method === "POST") {
+      const { nome } = await lerCorpo(req);
+      if (!arquivoDoNome(nome || "")) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
+      const cancelou = await estudos.cancelar(nome);
+      return json(res, 200, { ok: true, cancelou, estado: "nenhum" });
+    }
+
+    // ---------- vídeo com legenda em português gravada (ffmpeg) ----------
+    // GET  /api/legendar?nome=<video> → estado: nenhum | na-fila | gravando (pct real) | pronto | erro
+    // POST /api/legendar {nome, refazer} → começa a gravar (precisa do estudo, que tem a transcrição)
+    if (rota === "/api/legendar" && (req.method === "GET" || req.method === "POST")) {
+      const corpo = req.method === "POST" ? await lerCorpo(req) : {};
+      const nome = req.method === "POST" ? corpo.nome || "" : url.searchParams.get("nome") || "";
+      const caminho = arquivoDoNome(nome);
+      if (!caminho || !existsSync(caminho)) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
+      if (EXT_AUDIO.has(path.extname(nome).toLowerCase())) return json(res, 400, { ok: false, erro: "arquivo de audio nao tem imagem para gravar legenda" });
+      if (req.method === "POST") {
+        if (legendagem.emAndamento(nome)) return json(res, 202, { ok: true, ...legendagem.estado(nome) });
+        const estudo = await lerJson(arquivoEstudo(nome));
+        if (!estudo || !(estudo.transcricao || []).length) return json(res, 409, { ok: false, erro: "gere o estudo com IA primeiro (ele traz a transcricao)" });
+        // legenda "em português" só com a transcrição 100% em português (mesma regra da apostila)
+        const semTraducao = motivoSemApostila(estudo, "o vídeo legendado");
+        if (semTraducao) return json(res, 409, { ok: false, erro: semTraducao });
+        if (corpo.refazer) { await unlink(arquivoLegendado(nome)).catch(() => {}); await unlink(fichaLegendado(arquivoLegendado(nome))).catch(() => {}); }
+        else if (existsSync(arquivoLegendado(nome))) return json(res, 200, { ok: true, estado: "pronto" });
+        const meta = (await lerJson(arquivoMeta(nome))) || {};
+        const duracao = Number(meta.duracao) || (await duracaoDoArquivo(caminho)) || 0;
+        // tarja: caixa escura atrás da legenda, para cobrir a legenda original já gravada no vídeo
+        legendagem.iniciar({ nome, video: caminho, transcricao: estudo.transcricao, duracao, destino: arquivoLegendado(nome), tarja: !!corpo.tarja });
+        return json(res, 202, { ok: true, ...legendagem.estado(nome) });
+      }
+      const job = legendagem.estado(nome);
+      if (job) return json(res, 200, { ok: true, ...job });
+      if (existsSync(arquivoLegendado(nome))) {
+        const ficha = (await lerJson(fichaLegendado(arquivoLegendado(nome)))) || {};
+        return json(res, 200, { ok: true, estado: "pronto", tamanho: (await stat(arquivoLegendado(nome))).size, tarja: !!ficha.tarja });
+      }
+      return json(res, 200, { ok: true, estado: "nenhum" });
+    }
+
+    // ---------- legenda em português para o player do app (WebVTT, a mesma divisão do SRT) ----------
+    // GET /api/legenda.vtt?nome=<video> → só com a transcrição em português (mesma regra da apostila)
+    if (rota === "/api/legenda.vtt" && req.method === "GET") {
+      const nome = url.searchParams.get("nome") || "";
+      if (!arquivoDoNome(nome)) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
+      const estudo = await lerJson(arquivoEstudo(nome));
+      if (!estudo || !(estudo.transcricao || []).length) return json(res, 404, { ok: false, erro: "sem estudo" });
+      const semTraducao = motivoSemApostila(estudo, "a legenda em português");
+      if (semTraducao) return json(res, 409, { ok: false, erro: semTraducao });
+      const vtt = "WEBVTT\n\n" + legendasSrt(estudo.transcricao).replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, "$1.$2");
+      res.writeHead(200, { "Content-Type": "text/vtt; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end(vtt);
+    }
+
     if (rota === "/api/estudo" && req.method === "POST") {
       const { nome, refazer } = await lerCorpo(req);
       const caminho = arquivoDoNome(nome || "");
       if (!caminho || !existsSync(caminho)) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
       if (!estudos.configurado()) return json(res, 503, { ok: false, erro: "a IA ainda nao foi conectada no servidor (veja IA_PROVEDOR no README)" });
-      if (refazer) await unlink(arquivoEstudo(nome)).catch(() => {});
+      if (refazer) { await unlink(arquivoEstudo(nome)).catch(() => {}); if (!legendagem.emAndamento(nome)) { await unlink(arquivoLegendado(nome)).catch(() => {}); await unlink(fichaLegendado(arquivoLegendado(nome))).catch(() => {}); } }
       else if (await lerJson(arquivoEstudo(nome))) return json(res, 200, { ok: true, estado: "pronto" });
       const meta = (await lerJson(arquivoMeta(nome))) || {};
       estudos.iniciar(nome, caminho, meta, arquivoEstudo(nome));

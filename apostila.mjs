@@ -105,12 +105,12 @@ function montarHtml(e, { capa, quadros, infografico, logo, meta }) {
 
   return `<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="utf-8">
-<title>${esc(e.titulo)} · Apostila de estudo</title>
+<title>${esc(e.titulo)} · Apostila Técnica Interativa</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
 @page { size: A4; margin: 18mm 17mm 20mm;
-  @bottom-left { content: "Merge Forge  ·  Apostila de estudo"; font: 500 8pt Geist, sans-serif; color: #9a958a; }
+  @bottom-left { content: "Merge Forge  ·  Apostila Técnica Interativa"; font: 500 8pt Geist, sans-serif; color: #9a958a; }
   @bottom-right { content: counter(page); font: 600 8pt "Geist Mono", monospace; color: #9a958a; } }
 @page capa { margin: 0; @bottom-left { content: none; } @bottom-right { content: none; } }
 @page cheia { margin: 10mm; @bottom-left { content: none; } @bottom-right { content: none; } }
@@ -269,7 +269,7 @@ a.lt-ponto { color: #f3d08a; }
   <div class="capa-veu"></div>
   <div class="capa-topo">${logo ? `<img src="${esc(logo)}" alt="">` : ""}<div><strong>Merge Forge</strong><span>por Merge IA</span></div></div>
   <div class="capa-corpo">
-    <span class="capa-tag">Apostila de estudo</span>
+    <span class="capa-tag">Apostila Técnica Interativa</span>
     <h1>${esc(e.titulo)}</h1>
     ${e.tema ? `<p class="capa-tema">${esc(e.tema)}</p>` : ""}
     <div class="capa-dados">

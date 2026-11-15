@@ -1,12 +1,14 @@
 // Folha "Baixar": cada material do vídeo em arquivo separado ou tudo num ZIP.
-import { el, icone, api, aviso, abrirFolha, fecharFolha } from "./app.js";
+import { el, icone, api, aviso, abrirFolha, fecharFolha, barraProgresso } from "./app.js";
+import { tarjaPreferida } from "./estudio.js";
 
 const ICONES = {
   apostila: "book-open-text", video: "film-strip", infografico: "image", documento: "file-text", resumo: "text-align-left", mapa: "graph", "mapa-md": "graph",
   organograma: "tree-structure", tempo: "clock-countdown", perguntas: "cards", anki: "stack", transcricao: "subtitles", legendas: "closed-captioning", "infografico-texto": "article",
+  "transcricao-original": "translate", "legendas-original": "closed-captioning", "video-legendado": "film-strip",
 };
 const DICAS = {
-  apostila: "Material de curso: capa, aulas com cenas do vídeo, diagramas e exercícios",
+  apostila: "PDF com sumário clicável, cenas do vídeo, diagramas, exercícios e gabarito",
   video: "O arquivo original",
   infografico: "O pôster em imagem",
   documento: "Tudo numa página. Abre no navegador e salva em PDF",
@@ -18,10 +20,13 @@ const DICAS = {
   perguntas: "Perguntas e respostas para revisar",
   anki: "Importa direto no Anki (cartões de memorização)",
   transcricao: "Tudo o que foi falado, com o minuto",
-  legendas: "Legenda para usar com o vídeo (.srt)",
+  legendas: "Legenda para usar com o vídeo (.srt): VLC, YouTube, editores",
+  "transcricao-original": "O texto no idioma em que o vídeo foi falado",
+  "legendas-original": "Legenda no idioma original (.srt)",
+  "video-legendado": "O vídeo com a legenda em português gravada na imagem",
   "infografico-texto": "Os textos do pôster",
 };
-const ORDEM = ["apostila", "video", "infografico", "documento", "resumo", "mapa", "organograma", "tempo", "perguntas", "anki", "transcricao", "legendas", "mapa-md", "infografico-texto"];
+const ORDEM = ["apostila", "video", "video-legendado", "infografico", "documento", "resumo", "mapa", "organograma", "tempo", "perguntas", "anki", "transcricao", "legendas", "transcricao-original", "legendas-original", "mapa-md", "infografico-texto"];
 
 const tamanho = (b) => b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " GB" : b >= 1e6 ? (b / 1e6).toFixed(1).replace(".", ",") + " MB" : b >= 1e3 ? Math.round(b / 1e3) + " KB" : b + " B";
 const url = (nome, item, extra = "") => `/api/exportar?nome=${encodeURIComponent(nome)}&item=${encodeURIComponent(item)}${extra}`;
@@ -62,11 +67,19 @@ export async function abrirExportar(nome, titulo) {
   };
   const linhas = ORDEM.filter((id) => porId[id]).map((id) => {
     const i = porId[id];
+    // apostila sem tradução completa: aparece bloqueada, com o motivo, e não entra no ZIP
+    if (id === "apostila" && i.bloqueada) return el("li", { class: "exp-linha exp-linha--bloqueada" }, [
+      el("span", { class: "exp-marca" }),
+      el("div", { class: "exp-item", "aria-disabled": "true" }, [
+        el("span", { class: "exp-ic" }, [icone("lock-simple", true)]),
+        el("span", { class: "exp-txt" }, [el("strong", { texto: i.rotulo + " (bloqueada)" }), el("small", { texto: i.bloqueada.charAt(0).toUpperCase() + i.bloqueada.slice(1) })]),
+      ]),
+    ]);
     const caixa = el("input", { type: "checkbox", class: "exp-check", "aria-label": `Marcar ${i.rotulo} para o ZIP` });
     caixa.addEventListener("change", () => { if (caixa.checked) marcados.add(id); else marcados.delete(id); atualizarBarra(); });
     return el("li", { class: "exp-linha" }, [
       el("label", { class: "exp-marca", title: "Marcar para baixar junto" }, [caixa]),
-      el("a", { class: "exp-item" + (id === "apostila" ? " exp-item--destaque" : ""), href: url(nome, id), download: "", onclick: () => aviso(i.geraNaHora ? "Montando a apostila. O download começa em alguns segundos." : `Baixando: ${i.rotulo}`, i.geraNaHora ? "book-open-text" : "download-simple") }, [
+      el("a", { class: "exp-item" + (id === "apostila" ? " exp-item--destaque" : ""), href: url(nome, id), download: "", onclick: () => aviso(i.geraNaHora ? "Montando a Apostila Técnica Interativa. O download começa em alguns segundos." : `Baixando: ${i.rotulo}`, i.geraNaHora ? "book-open-text" : "download-simple") }, [
         el("span", { class: "exp-ic" }, [icone(ICONES[id] || "file", true)]),
         el("span", { class: "exp-txt" }, [el("strong", { texto: i.rotulo }), el("small", { texto: DICAS[id] || i.arquivo })]),
         el("span", { class: "exp-tam mono", texto: i.geraNaHora ? "gera na hora" : tamanho(i.tamanho) }),
@@ -75,6 +88,7 @@ export async function abrirExportar(nome, titulo) {
     ]);
   });
   const lista = el("ul", { class: "exp-lista" }, linhas);
+  const gravar = temVideo && d.temEstudo && !d.audio ? cartaoLegendar(nome, titulo, d.legendaBloqueada) : null;
 
   abrirFolha([
     el("h2", { id: "folha-titulo", texto: "Baixar" }),
@@ -84,7 +98,72 @@ export async function abrirExportar(nome, titulo) {
     el("h3", { class: "exp-sub", texto: "Ou escolha o que baixar" }),
     el("p", { class: "exp-dica", texto: "Marque as caixinhas para baixar vários juntos num ZIP, ou toque num item para baixar só ele." }),
     lista,
+    gravar,
     barra,
     el("button", { class: "btn btn--fantasma btn--bloco", onclick: fecharFolha }, ["Fechar"]),
   ].filter(Boolean));
+}
+
+// Vídeo com a legenda em português gravada na imagem: o servidor regrava o vídeo com o ffmpeg.
+// Porcentagem real (o ffmpeg informa quanto do vídeo já foi gravado).
+function cartaoLegendar(nome, titulo, bloqueio) {
+  const caixa = el("div", { class: "exp-legendar" });
+  // estudo antigo sem tradução: a legenda sairia no idioma original, então fica bloqueado com o motivo
+  if (bloqueio) {
+    caixa.classList.add("exp-legendar--bloqueado");
+    caixa.replaceChildren(el("div", { class: "exp-legendar-topo" }, [
+      el("span", { class: "exp-ic" }, [icone("lock-simple", true)]),
+      el("span", { class: "exp-txt" }, [el("strong", { texto: "Vídeo com legenda em português (bloqueado)" }), el("small", { texto: bloqueio.charAt(0).toUpperCase() + bloqueio.slice(1) })]),
+    ]));
+    return caixa;
+  }
+  let timer = null;
+  let estavaGravando = false;
+  // tarja escura: cobre a legenda que o vídeo já traz gravada no idioma original (começa como no player)
+  let tarja = tarjaPreferida(nome);
+  const opcaoTarja = () => {
+    const c = el("input", { type: "checkbox", class: "exp-check" });
+    c.checked = tarja;
+    c.addEventListener("change", () => { tarja = c.checked; });
+    return el("label", { class: "exp-tarja" }, [c, el("span", {}, [
+      el("strong", { texto: "Tarja escura atrás da legenda" }),
+      el("small", { texto: "Use se o vídeo já tem legenda no idioma original: a tarja cobre a outra legenda." }),
+    ])]);
+  };
+  const desenhar = (d) => {
+    if (!caixa.isConnected && timer) { clearTimeout(timer); return; }
+    if (d.estado === "pronto" && estavaGravando) { aviso("Vídeo legendado pronto.", "check-circle"); abrirExportar(nome, titulo); return; }
+    const andando = d.estado === "na-fila" || d.estado === "gravando";
+    estavaGravando = andando;
+    const pronto = d.estado === "pronto";
+    caixa.replaceChildren(...[
+      el("div", { class: "exp-legendar-topo" }, [
+        el("span", { class: "exp-ic" }, [icone(pronto ? "check-circle" : "subtitles", true)]),
+        el("span", { class: "exp-txt" }, [
+          el("strong", { texto: pronto ? "Vídeo com legenda em português: pronto" : "Vídeo com legenda em português" }),
+          el("small", { texto: pronto
+            ? `Gravado ${d.tarja ? "com tarja escura" : "sem tarja"}. Está na lista acima. Para trocar, grave de novo.`
+            : "Grava a legenda na imagem do vídeo. Pode levar alguns minutos (vídeos longos, mais)." }),
+        ]),
+      ]),
+      andando ? barraProgresso(d.pct || 0) : null,
+      andando ? el("p", { class: "exp-dica", texto: d.estado === "na-fila" ? "Na fila..." : "Gravando a legenda no vídeo. Pode fechar esta janela: continua no computador." }) : null,
+      d.estado === "erro" ? el("p", { class: "est-erro", role: "alert", texto: "Deu erro: " + d.erro }) : null,
+      andando ? null : opcaoTarja(),
+      andando ? null : el("button", { class: "btn btn--secundario btn--bloco", onclick: () => comecar(pronto) }, [icone(pronto ? "arrow-clockwise" : "subtitles"), pronto ? "Gravar de novo" : d.estado === "erro" ? "Tentar de novo" : "Criar vídeo legendado"]),
+    ].filter(Boolean)); // sem o filtro, os "null" viravam o texto "nullnull" na tela
+    if (andando) timer = setTimeout(atualizar, 1500);
+  };
+  async function atualizar() {
+    try { desenhar(await (await api("/api/legendar?nome=" + encodeURIComponent(nome))).json()); } catch { timer = setTimeout(atualizar, 3000); }
+  }
+  async function comecar(refazer) {
+    try {
+      const d = await (await api("/api/legendar", { method: "POST", body: JSON.stringify({ nome, tarja, refazer: !!refazer }) })).json();
+      if (!d.ok) throw new Error(d.erro || "não deu para começar");
+      desenhar(d);
+    } catch (e) { aviso("Não deu para criar: " + e.message, "warning"); }
+  }
+  atualizar();
+  return caixa;
 }

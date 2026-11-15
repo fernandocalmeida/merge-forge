@@ -487,7 +487,9 @@ function mostrarPrevia(info, carregando = false) {
     return;
   }
   if (!info.ok) {
-    alvo.replaceChildren(el("p", { class: "previa-erro", texto: "Não deu para ver a prévia desse link, mas você ainda pode tentar baixar." }));
+    // link de busca/canal/perfil: o servidor explica e o download nem tenta
+    const naoEhVideo = /não de um vídeo/.test(info.erro || "");
+    alvo.replaceChildren(el("p", { class: "previa-erro", texto: naoEhVideo ? "Atenção: " + info.erro + "." : "Não deu para ver a prévia desse link, mas você ainda pode tentar baixar." }));
     return;
   }
   previa = info;
@@ -725,6 +727,13 @@ window.addEventListener("estudo-pronto", (e) => {
   $$(".ferramentas-ia--bloqueada").filter((c) => c.dataset.nome === e.detail && c.__item).forEach((c) => c.replaceWith(ferramentasIA({ ...c.__item, temEstudo: true, estudando: false })));
 });
 
+// estudo cancelado: o vídeo volta a mostrar "Gerar estudo com IA"
+window.addEventListener("estudo-cancelado", (e) => {
+  const it = itensBiblioteca.find((i) => i.nome === e.detail);
+  if (it) { it.estudando = false; carregarBiblioteca(); }
+  $(".ferramentas-ia--bloqueada").filter((c) => c.dataset.nome === e.detail && c.__item).forEach((c) => c.replaceWith(ferramentasIA({ ...c.__item, estudando: false })));
+});
+
 function acoesBase(it) {
   return el("div", { class: "acoes-base" }, [
     el("button", { class: "acao", onclick: () => tocar(it) }, [icone(it.audio ? "headphones" : "play"), el("span", { texto: it.audio ? "Ouvir" : "Assistir" })]),
@@ -791,13 +800,96 @@ export async function carregarBiblioteca() {
   renderizarRecentes();
   const comEstudo = itensBiblioteca.filter((i) => i.temEstudo).length;
   $("#bib-resumo").textContent = n ? `${n} ${n === 1 ? "arquivo" : "arquivos"}${comEstudo ? `, ${comEstudo} com estudo de IA` : ""}.` : "Tudo o que você já baixou.";
+  // quem foi apagado (aqui ou em outra aba) sai da seleção
+  const existentes = new Set(itensBiblioteca.map((i) => i.nome));
+  for (const n of [...selecionados]) if (!existentes.has(n)) selecionados.delete(n);
+  if (selecionando && !n) sairSelecao();
   renderizarBiblioteca();
 }
 
+// ---------- seleção de vários vídeos (para excluir juntos) ----------
+let selecionando = false;
+const selecionados = new Set();
+function entrarSelecao() {
+  selecionando = true;
+  $("#bib-selecionar").setAttribute("aria-pressed", "true");
+  $("#barra-selecao").hidden = false;
+  renderizarBiblioteca();
+}
+function sairSelecao() {
+  selecionando = false;
+  selecionados.clear();
+  $("#bib-selecionar").setAttribute("aria-pressed", "false");
+  $("#barra-selecao").hidden = true;
+  renderizarBiblioteca();
+}
+function atualizarBarraSelecao() {
+  const q = selecionados.size;
+  $("#sel-contagem").textContent = q ? `${q} ${q === 1 ? "marcado" : "marcados"}` : "Toque nos vídeos para marcar";
+  $("#sel-excluir").disabled = !q;
+  $("#sel-excluir span").textContent = q ? `Excluir (${q})` : "Excluir";
+  const visiveis = listaFiltrada();
+  $("#sel-todos").textContent = visiveis.length && visiveis.every((it) => selecionados.has(it.nome)) ? "Desmarcar todos" : "Marcar todos";
+}
+$("#bib-selecionar").addEventListener("click", () => (selecionando ? sairSelecao() : entrarSelecao()));
+$("#sel-cancelar").addEventListener("click", sairSelecao);
+$("#sel-todos").addEventListener("click", () => {
+  const visiveis = listaFiltrada();
+  const todos = visiveis.every((it) => selecionados.has(it.nome));
+  for (const it of visiveis) todos ? selecionados.delete(it.nome) : selecionados.add(it.nome);
+  renderizarBiblioteca();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && selecionando && $("#folha-fundo").dataset.aberta !== "1") sairSelecao(); });
+$("#sel-excluir").addEventListener("click", confirmarExclusaoEmConjunto);
+
+async function confirmarExclusaoEmConjunto() {
+  await carregarBiblioteca(); // estado atual (ex.: estudo que começou agora), para o aviso sair certo
+  const itens = itensBiblioteca.filter((it) => selecionados.has(it.nome));
+  if (!itens.length) return;
+  const q = itens.length;
+  const emEstudo = itens.filter((it) => it.estudando).length;
+  const comEstudo = itens.filter((it) => it.temEstudo).length;
+  const MOSTRAR = 6;
+  const botao = el("button", { class: "btn btn--perigo", "data-confirmar": "1" }, [icone("trash"), el("span", { class: "rotulo", texto: q === 1 ? "Excluir 1 vídeo" : `Excluir ${q} vídeos` })]);
+  botao.addEventListener("click", async () => {
+    botao.dataset.estado = "carregando";
+    const falhas = [];
+    let feitos = 0;
+    for (const it of itens) {
+      $(".rotulo", botao).textContent = `Excluindo ${feitos + 1} de ${q}…`;
+      try {
+        const r = await api("/api/downloads/" + encodeURIComponent(it.nome), { method: "DELETE" });
+        const d = await r.json();
+        if (!d.ok && r.status !== 404) throw new Error(d.erro); // 404: já tinha sido apagado
+        selecionados.delete(it.nome);
+      } catch (e) { falhas.push(nomeLimpo(it)); }
+      feitos++;
+    }
+    fecharFolha();
+    if (falhas.length) aviso(`${q - falhas.length} de ${q} excluídos. Não deu para excluir: ${falhas.slice(0, 2).join(", ")}${falhas.length > 2 ? "…" : ""}`, "warning");
+    else aviso(q === 1 ? "1 vídeo excluído." : `${q} vídeos excluídos.`, "trash");
+    if (!falhas.length) sairSelecao();
+    carregarBiblioteca();
+  });
+  abrirFolha([
+    el("h2", { id: "folha-titulo", texto: q === 1 ? "Excluir 1 vídeo?" : `Excluir ${q} vídeos?` }),
+    el("ul", { class: "lista-excluir" }, [
+      ...itens.slice(0, MOSTRAR).map((it) => el("li", { texto: nomeLimpo(it) })),
+      q > MOSTRAR ? el("li", { texto: `e mais ${q - MOSTRAR}` }) : null,
+    ]),
+    el("p", { class: "alerta-excluir", texto: [
+      "Os arquivos são apagados deste computador e não dá para desfazer.",
+      comEstudo ? `${comEstudo === 1 ? "O estudo de IA dele também é apagado" : "Os estudos de IA deles também são apagados"}.` : "",
+      emEstudo ? `${emEstudo === 1 ? "Um estudo que está sendo gerado agora será cancelado" : `${emEstudo} estudos sendo gerados agora serão cancelados`}.` : "",
+    ].filter(Boolean).join(" ") }),
+    el("div", { class: "rodape-folha" }, [botao, el("button", { class: "btn btn--secundario", onclick: fecharFolha }, ["Cancelar"])]),
+  ]);
+}
+
 $("#busca").addEventListener("input", (e) => { termo = e.target.value.trim().toLowerCase(); renderizarBiblioteca(); });
-$$(".filtro").forEach((b) => b.addEventListener("click", () => {
+$$(".filtro[data-filtro]").forEach((b) => b.addEventListener("click", () => {
   filtro = b.dataset.filtro;
-  $$(".filtro").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  $$(".filtro[data-filtro]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   renderizarBiblioteca();
 }));
 
@@ -816,14 +908,21 @@ function renderizarRecentes() {
   }));
 }
 
-function renderizarBiblioteca() {
-  const alvo = $("#biblioteca");
-  const lista = itensBiblioteca.filter((it) => {
+function listaFiltrada() {
+  return itensBiblioteca.filter((it) => {
     if (filtro === "video" && it.audio) return false;
     if (filtro === "audio" && !it.audio) return false;
     if (filtro === "estudo" && !it.temEstudo) return false;
     return !termo || nomeLimpo(it).toLowerCase().includes(termo) || it.nome.toLowerCase().includes(termo);
   });
+}
+
+function renderizarBiblioteca() {
+  const alvo = $("#biblioteca");
+  const lista = listaFiltrada();
+  alvo.dataset.selecionando = selecionando ? "1" : "";
+  $("#bib-selecionar").hidden = !itensBiblioteca.length;
+  if (selecionando) atualizarBarraSelecao();
   if (!itensBiblioteca.length) {
     alvo.replaceChildren(el("div", { class: "vazio", style: "grid-column:1/-1" }, [
       icone("film-slate"), el("h3", { texto: "Nada por aqui ainda" }), el("p", { texto: "Os vídeos que você baixar aparecem aqui." }),
@@ -840,8 +939,9 @@ function renderizarBiblioteca() {
 
 function cartaoMidia(it, i) {
   const rede = it.rede || redeDoNome(it.nome);
-  const b = el("button", { class: "midia", style: `--i:${Math.min(i, 12)}`, "aria-label": nomeLimpo(it) }, [
+  const b = el("button", { class: "midia", style: `--i:${Math.min(i, 12)}`, "aria-label": nomeLimpo(it), "aria-pressed": selecionando ? String(selecionados.has(it.nome)) : null }, [
     el("div", { class: "capa" }, [
+      el("span", { class: "marca" }, [icone("check", true)]),
       it.thumb ? el("img", { src: it.thumb, alt: "", loading: "lazy", referrerpolicy: "no-referrer", onerror: (e) => { e.target.replaceWith(icone(it.audio ? "music-notes" : "film-strip")); } }) : icone(it.audio ? "music-notes" : "film-strip"),
       it.duracao ? el("span", { class: "tempo", texto: duracao(it.duracao) }) : null,
       el("span", { class: "play" }, [icone(it.audio ? "headphones" : "play-circle", true)]),
@@ -853,7 +953,12 @@ function cartaoMidia(it, i) {
         : it.temEstudo ? el("div", { style: "margin-top:8px" }, [el("span", { class: "selo" }, [icone("sparkle", true), "Estudo pronto"])]) : null,
     ]),
   ]);
-  b.addEventListener("click", () => abrirAcoes(it));
+  b.addEventListener("click", () => {
+    if (!selecionando) return abrirAcoes(it);
+    selecionados.has(it.nome) ? selecionados.delete(it.nome) : selecionados.add(it.nome);
+    b.setAttribute("aria-pressed", String(selecionados.has(it.nome)));
+    atualizarBarraSelecao();
+  });
   return b;
 }
 

@@ -286,7 +286,7 @@ const PASSOS = [
     passos: ["Entre em console.groq.com (dá para entrar com a conta Google).", "No menu, abra API Keys e toque em Create API Key.", "Copie a chave e cole no campo abaixo."],
     secao: (s) => [secaoGroq(s)] },
   { id: "imagem", titulo: "Conta ChatGPT", papel: "O ilustrador", obrigatorio: false, pronto: prontoImagem,
-    texto: "Desenha o pôster do infográfico com o gerador de imagens do ChatGPT, na sua assinatura. É opcional: sem ele, todo o resto funciona (inclusive a apostila em PDF).",
+    texto: "Desenha o pôster do infográfico com o gerador de imagens do ChatGPT, na sua assinatura. É opcional: sem ele, todo o resto funciona (inclusive a Apostila Técnica Interativa).",
     secao: (s) => [secaoImagem(s)] },
 ];
 

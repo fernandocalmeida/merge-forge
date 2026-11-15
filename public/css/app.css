@@ -462,6 +462,36 @@ i.ph, i.ph-fill { font-size: 20px; line-height: 1; }
 .midia .play i { font-size: 44px; transform: scale(.8); transition: transform .4s var(--mola); filter: drop-shadow(0 6px 16px rgba(0, 0, 0, .6)); }
 .midia:hover .play { opacity: 1; }
 .midia:hover .play i { transform: scale(1); }
+/* seleção de vários vídeos (para excluir juntos) */
+#tela-biblioteca .tela-cabeca { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-3); }
+.filtro--selecionar { display: inline-flex; align-items: center; gap: 6px; }
+.filtro--selecionar[hidden] { display: none; }
+.filtro--selecionar i { font-size: 16px; }
+.midia .marca { position: absolute; top: 8px; left: 8px; z-index: 2; width: 28px; height: 28px; border-radius: 50%; display: none; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .55); border: 2px solid rgba(255, 255, 255, .85); color: transparent; font-size: 16px; transition: all .25s var(--mola); }
+.biblioteca[data-selecionando="1"] .midia .marca { display: flex; }
+.biblioteca[data-selecionando="1"] .midia .play { display: none; }
+.biblioteca[data-selecionando="1"] .midia:hover { transform: none; }
+.midia[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-line); }
+.midia[aria-pressed="true"] .marca { background: var(--grad); border-color: transparent; color: var(--accent-ink); transform: scale(1.08); }
+.midia[aria-pressed="true"] .capa img { opacity: .7; }
+.barra-selecao {
+  position: sticky; z-index: 26; bottom: calc(var(--abas-h) + 18px + env(safe-area-inset-bottom)); margin-top: var(--s-4);
+  display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+  background: rgba(20, 20, 24, .92); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--accent-line); border-radius: 18px; box-shadow: 0 20px 50px -20px rgba(0, 0, 0, .9);
+  animation: subir .35s var(--ease) both;
+}
+.barra-selecao[hidden] { display: none; }
+.barra-selecao .contagem { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.barra-selecao .btn { flex-shrink: 0; }
+.barra-selecao .btn:disabled { opacity: .4; pointer-events: none; }
+@media (max-width: 520px) { #sel-todos { display: none; } }
+@media (min-width: 960px) { .barra-selecao { bottom: var(--s-5); } }
+.lista-excluir { margin: var(--s-3) 0 0; padding-left: 1.2em; color: var(--ink-2); font-size: 14px; display: grid; gap: 4px; }
+.lista-excluir li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folha .alerta-excluir { margin-top: var(--s-3); font-size: 13.5px; color: var(--ink-3); }
+
 .midia .info { min-width: 0; padding: 2px 0; }
 @media (min-width: 720px) { .midia .info { padding: var(--s-3) var(--s-4) var(--s-4); } }
 .midia h3 { font-size: 14.5px; font-weight: 650; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -764,3 +794,15 @@ a.btn { text-decoration: none; }
 .ass-resumo li span { display: grid; }
 .ass-resumo li small { color: var(--ink-3); font-size: 12px; }
 .ass-abrir { margin: var(--s-2) 0 var(--s-3); }
+
+/* Apostila bloqueada (transcrição ainda não está em português): continua visível, com cadeado e o motivo */
+.btn--bloqueado { cursor: help; color: var(--ink-3); border-style: dashed; border-color: var(--line-2); background: transparent; }
+.btn--bloqueado:hover { color: var(--ink-2); border-color: var(--line-2); background: rgba(255, 255, 255, .03); }
+.btn--bloqueado i { color: var(--accent-text); opacity: .8; }
+.exp-linha--bloqueada .exp-marca { cursor: default; border-style: dashed; background: transparent; }
+.exp-linha--bloqueada .exp-item { cursor: default; border-style: dashed; background: transparent; opacity: .85; }
+.exp-linha--bloqueada .exp-ic { color: var(--accent-text); }
+.exp-linha--bloqueada .exp-txt strong { color: var(--ink-2); }
+.exp-linha--bloqueada .exp-txt small { color: var(--ink-3); white-space: normal; }
+.exp-linha--bloqueada .exp-item:hover { border-color: var(--line-2); background: transparent; }
+.exp-linha--bloqueada .exp-item:active { transform: none; }

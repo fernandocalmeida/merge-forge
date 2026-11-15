@@ -94,15 +94,52 @@ function transcricaoTxt(e) {
   const blocos = e.transcricao || [];
   return `${e.titulo}\n\n` + blocos.map((b) => `[${mmss(b.inicio)}] ${b.texto}`).join("\n\n") + "\n";
 }
-function legendasSrt(e) {
-  const blocos = (e.transcricao || []).filter((b) => b && b.texto);
-  return blocos.map((b, i) => {
-    const ini = Number(b.inicio) || 0;
-    const prox = blocos[i + 1] ? Number(blocos[i + 1].inicio) : ini + 8;
-    const fim = Math.max(ini + 1, Math.min(prox, ini + 20));
-    return `${i + 1}\n${srtTempo(ini)} --> ${srtTempo(fim)}\n${b.texto}\n`;
-  }).join("\n");
+// Legenda de verdade: cada bloco da transcrição (até ~20 s) é quebrado em falas curtas (até 2 linhas
+// de ~42 letras), e o tempo do bloco é dividido entre elas pelo tamanho do texto.
+function quebrarFala(t, max = 84) {
+  const partes = [];
+  let resto = String(t || "").replace(/\s+/g, " ").trim();
+  while (resto.length > max) {
+    const janela = resto.slice(0, max + 1);
+    let corte = Math.max(janela.lastIndexOf(". "), janela.lastIndexOf("? "), janela.lastIndexOf("! "));
+    if (corte < max * 0.4) corte = Math.max(janela.lastIndexOf(", "), janela.lastIndexOf("; "));
+    if (corte < max * 0.4) corte = janela.lastIndexOf(" ");
+    if (corte <= 0) corte = max;
+    partes.push(resto.slice(0, corte + 1).trim());
+    resto = resto.slice(corte + 1).trim();
+  }
+  if (resto) partes.push(resto);
+  return partes;
 }
+function duasLinhas(t) {
+  if (t.length <= 42) return t;
+  const meio = Math.floor(t.length / 2);
+  const esq = t.lastIndexOf(" ", meio), dir = t.indexOf(" ", meio);
+  const c = esq < 0 ? dir : dir < 0 ? esq : meio - esq <= dir - meio ? esq : dir;
+  return c > 0 ? t.slice(0, c) + "\n" + t.slice(c + 1) : t;
+}
+export function falasLegenda(transcricao) {
+  const blocos = (transcricao || []).filter((b) => b && b.texto);
+  const falas = [];
+  blocos.forEach((b, i) => {
+    const ini = Number(b.inicio) || 0;
+    const prox = blocos[i + 1] ? Number(blocos[i + 1].inicio) : ini + Math.min(20, Math.max(3, b.texto.length / 15));
+    const fim = Math.max(ini + 1, Math.min(prox, ini + 25));
+    const partes = quebrarFala(b.texto);
+    const total = partes.reduce((t, p) => t + p.length, 0) || 1;
+    let t = ini;
+    for (const p of partes) {
+      const d = (fim - ini) * (p.length / total);
+      falas.push({ ini: t, fim: t + d, texto: duasLinhas(p) });
+      t += d;
+    }
+  });
+  return falas;
+}
+export function legendasSrt(transcricao) {
+  return falasLegenda(transcricao).map((f, i) => `${i + 1}\n${srtTempo(f.ini)} --> ${srtTempo(Math.max(f.ini + 0.5, f.fim - 0.05))}\n${f.texto}\n`).join("\n");
+}
+const NOMES_IDIOMA = { en: "inglês", es: "espanhol", fr: "francês", it: "italiano", de: "alemão", ja: "japonês", ko: "coreano", zh: "chinês", ru: "russo" };
 function infograficoTexto(e) {
   const p = e.poster;
   if (!p || !(p.secoes || []).length) return null;
@@ -143,7 +180,7 @@ ${sec("Transcrição", (e.transcricao || []).map((b) => `<p><span class="t">${mm
 
 // ---------- catálogo de itens exportáveis ----------
 // cada item: { arquivo, tipo, conteudo } (texto) ou { arquivo, tipo, caminho } (arquivo do disco)
-export function itensExportaveis(estudo, { video, imagemInfo, titulo }) {
+export function itensExportaveis(estudo, { video, imagemInfo, titulo, videoLegendado = null }) {
   const e = estudo || {};
   const base = nomeSeguro(titulo || e.titulo);
   const itens = {};
@@ -161,8 +198,17 @@ export function itensExportaveis(estudo, { video, imagemInfo, titulo }) {
   itens.anki = { arquivo: "Perguntas (Anki).csv", tipo: "text/csv; charset=utf-8", conteudo: perguntasCsv(e), rotulo: "Perguntas para o Anki" };
   if ((e.transcricao || []).length) {
     itens.transcricao = { arquivo: "Transcrição.txt", tipo: "text/plain; charset=utf-8", conteudo: transcricaoTxt(e), rotulo: "Transcrição" };
-    itens.legendas = { arquivo: `${base}.srt`, tipo: "application/x-subrip; charset=utf-8", conteudo: legendasSrt(e), rotulo: "Legendas (.srt)" };
+    // "nome.pt-BR.srt" ao lado do vídeo: VLC e outros players reconhecem como legenda em português
+    // só marca ".pt-BR" quando o texto é mesmo português (traduzido ou vídeo já em português)
+    const emPt = e.traduzida || e.idiomaOriginal === "pt";
+    itens.legendas = { arquivo: emPt ? `${base}.pt-BR.srt` : `${base}.srt`, tipo: "application/x-subrip; charset=utf-8", conteudo: legendasSrt(e.transcricao), rotulo: e.traduzida ? "Legenda em português (.srt)" : "Legendas (.srt)" };
   }
+  if (e.traduzida && (e.transcricaoOriginal || []).length) {
+    const idioma = e.idiomaOriginal || "original";
+    itens["transcricao-original"] = { arquivo: `Transcrição original (${NOMES_IDIOMA[idioma] || idioma}).txt`, tipo: "text/plain; charset=utf-8", conteudo: transcricaoTxt({ titulo: e.titulo, transcricao: e.transcricaoOriginal }), rotulo: `Transcrição original (${NOMES_IDIOMA[idioma] || idioma})` };
+    itens["legendas-original"] = { arquivo: `${base}.${idioma}.srt`, tipo: "application/x-subrip; charset=utf-8", conteudo: legendasSrt(e.transcricaoOriginal), rotulo: `Legenda original (${NOMES_IDIOMA[idioma] || idioma}, .srt)` };
+  }
+  if (videoLegendado) itens["video-legendado"] = { arquivo: `${base} (legendado em português).mp4`, caminho: videoLegendado, rotulo: "Vídeo com legenda em português" };
   const infoTxt = infograficoTexto(e);
   if (infoTxt) itens["infografico-texto"] = { arquivo: "Infográfico (texto).md", tipo: md, conteudo: infoTxt, rotulo: "Texto do infográfico" };
   return itens;

@@ -206,6 +206,7 @@
             <h1 id="t-bib">Biblioteca</h1>
             <p id="bib-resumo">Tudo o que você já baixou.</p>
           </div>
+          <button class="filtro filtro--selecionar" id="bib-selecionar" aria-pressed="false"><i class="ph ph-check-square" aria-hidden="true"></i> Selecionar</button>
         </div>
         <div class="ferramentas">
           <label class="busca"><i class="ph ph-magnifying-glass"></i><span class="sr">Buscar</span><input id="busca" type="search" placeholder="Buscar pelo título" /></label>
@@ -217,6 +218,12 @@
           </div>
         </div>
         <div class="biblioteca" id="biblioteca"></div>
+        <div class="barra-selecao" id="barra-selecao" role="region" aria-label="Vídeos selecionados" hidden>
+          <span class="contagem" id="sel-contagem" aria-live="polite">Toque nos vídeos para marcar</span>
+          <button class="btn btn--secundario" id="sel-todos" type="button">Marcar todos</button>
+          <button class="btn btn--perigo" id="sel-excluir" type="button" disabled><i class="ph ph-trash" aria-hidden="true"></i> <span>Excluir</span></button>
+          <button class="btn btn--secundario" id="sel-cancelar" type="button" aria-label="Sair da seleção"><i class="ph ph-x" aria-hidden="true"></i></button>
+        </div>
         <section class="painel-ia" id="painel-biblioteca" aria-label="Painel de IA" hidden></section>
       </section>
 
