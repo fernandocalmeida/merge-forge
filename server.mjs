@@ -936,11 +936,17 @@ const servidor = http.createServer(async (req, res) => {
           try { itens.apostila = { arquivo: "Apostila Técnica Interativa.pdf", caminho: await garantirApostila(nome) }; }
           catch (e) { console.warn("apostila fora do ZIP:", e.message); }
         }
-        const entradas = ordem.filter((id) => itens[id] && !(semVideo && (id === "video" || id === "video-legendado")) && (id !== "video-legendado" || (escolhidos && escolhidos.has(id))) && (!escolhidos || escolhidos.has(id))).map((id) => {
+        const ids = ordem.filter((id) => itens[id] && !(semVideo && (id === "video" || id === "video-legendado")) && (id !== "video-legendado" || (escolhidos && escolhidos.has(id))) && (!escolhidos || escolhidos.has(id)));
+        if (!ids.length) return json(res, 400, { ok: false, erro: "nenhum item escolhido" });
+        // regra do Fernando (15/11): ZIP só para um conjunto; um arquivo só vem solto, no formato dele
+        if (ids.length === 1) {
+          res.writeHead(302, { Location: `/api/exportar?nome=${encodeURIComponent(nome)}&item=${encodeURIComponent(ids[0])}` });
+          return res.end();
+        }
+        const entradas = ids.map((id) => {
           const it = itens[id];
           return it.caminho ? { nome: `${pasta}/${it.arquivo}`, caminho: it.caminho } : { nome: `${pasta}/${it.arquivo}`, conteudo: it.conteudo };
         });
-        if (!entradas.length) return json(res, 400, { ok: false, erro: "nenhum item escolhido" });
         try { await enviarZip(res, entradas, `${pasta}.zip`); }
         catch (e) { console.warn("exportar zip interrompido:", e.message); res.destroy(); }
         return;

@@ -46,9 +46,11 @@ export async function abrirExportar(nome, titulo) {
 
   const porId = Object.fromEntries(d.itens.map((i) => [i.id, i]));
   const temVideo = !!porId.video;
-  const zip = (comVideo) => el("button", { class: "btn " + (comVideo ? "btn--primario btn--grande" : "btn--secundario") + " btn--bloco", onclick: () => baixar(url(nome, "tudo", comVideo ? "" : "&video=0"), comVideo ? "tudo em ZIP" : "materiais em ZIP") }, [
-    icone(comVideo ? "file-zip" : "files", comVideo),
-    el("span", { texto: comVideo ? `Baixar tudo (ZIP, ${tamanho(d.totalZip)})` : `Só os materiais, sem o vídeo (${tamanho(d.totalSemVideo)})` }),
+  // um arquivo só (ex.: vídeo sem estudo) não vira ZIP: o servidor manda o arquivo solto
+  const soUm = d.itens.length === 1 ? d.itens[0] : null;
+  const zip = (comVideo) => el("button", { class: "btn " + (comVideo ? "btn--primario btn--grande" : "btn--secundario") + " btn--bloco", onclick: () => baixar(soUm && comVideo ? url(nome, soUm.id) : url(nome, "tudo", comVideo ? "" : "&video=0"), soUm && comVideo ? soUm.rotulo : comVideo ? "tudo em ZIP" : "materiais em ZIP") }, [
+    icone(soUm && comVideo ? "download-simple" : comVideo ? "file-zip" : "files", comVideo),
+    el("span", { texto: soUm && comVideo ? `Baixar ${soUm.rotulo.toLowerCase()} (${tamanho(soUm.tamanho)})` : comVideo ? `Baixar tudo (ZIP, ${tamanho(d.totalZip)})` : `Só os materiais, sem o vídeo (${tamanho(d.totalSemVideo)})` }),
   ]);
 
   // marcar itens: a caixinha seleciona para o ZIP; tocar no resto da linha baixa só aquele item
@@ -58,10 +60,16 @@ export async function abrirExportar(nome, titulo) {
     if (!marcados.size) { barra.hidden = true; return; }
     const total = [...marcados].reduce((t, id) => t + (porId[id] ? porId[id].tamanho : 0), 0);
     barra.hidden = false;
+    // um item marcado vem solto, no formato dele; ZIP só com dois ou mais
+    const unico = marcados.size === 1 ? [...marcados][0] : null;
     barra.replaceChildren(
-      el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixar(url(nome, "tudo", "&itens=" + encodeURIComponent([...marcados].join(","))), `${marcados.size} ${marcados.size === 1 ? "item" : "itens"} em ZIP`) }, [
-        icone("file-zip", true), el("span", { texto: `Baixar ${marcados.size} em ZIP · ${tamanho(total)}` }),
-      ]),
+      unico
+        ? el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixar(url(nome, unico), porId[unico].rotulo) }, [
+          icone("download-simple", true), el("span", { texto: `Baixar 1 arquivo · ${porId[unico].geraNaHora ? "gera na hora" : tamanho(total)}` }),
+        ])
+        : el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixar(url(nome, "tudo", "&itens=" + encodeURIComponent([...marcados].join(","))), `${marcados.size} itens em ZIP`) }, [
+          icone("file-zip", true), el("span", { texto: `Baixar ${marcados.size} em ZIP · ${tamanho(total)}` }),
+        ]),
       el("button", { class: "btn btn--fantasma", onclick: () => { marcados.clear(); lista.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = false; }); atualizarBarra(); } }, ["Limpar"]),
     );
   };
