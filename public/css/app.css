@@ -593,6 +593,7 @@ i.ph, i.ph-fill { font-size: 20px; line-height: 1; }
 .con-problema i { font-size: 17px; flex: none; margin-top: 1px; }
 .con-acoes { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-3); }
 .con-acoes .btn { flex: 1 1 auto; }
+.exp-conferindo i { display: inline-block; animation: girar 1s linear infinite; }
 .con-texto { font-size: 14px; color: var(--ink-2); }
 .con-texto a { color: var(--accent-text); }
 .comando { display: flex; align-items: center; gap: var(--s-2); padding: 6px 6px 6px var(--s-3); border-radius: var(--r-sm); background: #000; border: 1px solid var(--line-2); margin-top: 6px; }

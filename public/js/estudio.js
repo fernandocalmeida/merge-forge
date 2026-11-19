@@ -2,7 +2,7 @@
 import { $, $$, el, icone, api, aviso, duracao, linkArquivo, irPara, barraProgresso } from "./app.js";
 import { abrirConexoes, aoMudarConexao, abrirReconectar } from "./conexoes.js";
 import { montarPoster } from "./poster.js";
-import { abrirExportar, entregarArquivo } from "./exportar.js";
+import { abrirExportar, baixarApostila } from "./exportar.js";
 import { chipRede, redeDoNome } from "./redes.js";
 
 const ICONES_DESTAQUE = {
@@ -405,11 +405,8 @@ function botaoApostila(it, bloqueio) {
     return b;
   }
   // o app prepara e busca o PDF (no celular o Android não entregava o download depois da espera)
-  b.addEventListener("click", () => entregarArquivo({
-    href: `/api/apostila?nome=${encodeURIComponent(it.nome)}`,
-    preparar: `/api/apostila?nome=${encodeURIComponent(it.nome)}&preparar=1`,
-    rotulo: "Apostila Técnica Interativa",
-  }));
+  // sem infográfico ainda: pergunta se quer criar antes, para ele entrar na apostila
+  b.addEventListener("click", () => baixarApostila(it.nome));
   return b;
 }
 

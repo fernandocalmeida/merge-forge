@@ -1,6 +1,7 @@
 // Folha "Baixar": cada material do vídeo em arquivo separado ou tudo num ZIP.
 import { el, icone, api, aviso, abrirFolha, fecharFolha, barraProgresso } from "./app.js";
 import { tarjaPreferida } from "./estudio.js";
+import { abrirReconectar } from "./conexoes.js";
 
 const ICONES = {
   apostila: "book-open-text", video: "film-strip", infografico: "image", documento: "file-text", resumo: "text-align-left", mapa: "graph", "mapa-md": "graph",
@@ -50,6 +51,77 @@ function nomeDoCabecalho(cd) {
   return n ? n[1] : "arquivo";
 }
 
+// Apostila: se o vídeo ainda não tem infográfico, pergunta antes se quer criar o pôster para ele entrar na apostila.
+// "Criar o infográfico e depois a apostila" faz os dois em sequência, sozinho; "sem infográfico" gera direto.
+const POSTER_ANDAMENTO = ["na-fila", "roteiro", "desenhando"];
+export async function baixarApostila(nome, { voltar = null, rotulo = "Apostila Técnica Interativa" } = {}) {
+  const direto = () => entregarArquivo({ href: urlApostila(nome), preparar: urlApostila(nome, "&preparar=1"), rotulo, voltar });
+  let p = null;
+  try { p = await (await api(`/api/poster?nome=${encodeURIComponent(nome)}`)).json(); } catch { /* sem a informação: gera direto */ }
+  if (!p || !p.ok || (p.poster && p.poster.imagem)) return direto();
+  if (POSTER_ANDAMENTO.includes(p.estado)) return esperarPosterDepoisApostila(nome, direto, voltar);
+  abrirFolha([
+    el("h2", { id: "folha-titulo", texto: "Incluir o infográfico na apostila?" }),
+    el("p", { class: "con-texto", texto: "Este vídeo ainda não tem infográfico. Com ele, a apostila ganha o pôster ilustrado do vídeo, com as etapas e as peças explicadas." }),
+    el("p", { class: "exp-dica", texto: p.imagemConectada ? "Criar o infográfico leva de 1 a 4 minutos e usa a sua conta do ChatGPT. A apostila sai logo em seguida, sozinha." : "O infográfico é desenhado com a sua conta do ChatGPT (Codex). Se ela não estiver conectada, o app pede para conectar antes." }),
+    el("div", { class: "exp-zip" }, [
+      el("button", { class: "btn btn--primario btn--grande btn--bloco", onclick: () => criarPosterDepoisApostila(nome, direto, voltar) }, [icone("magic-wand", true), el("span", { texto: "Criar o infográfico e depois a apostila" })]),
+      el("button", { class: "btn btn--secundario btn--bloco", onclick: direto }, [icone("book-open-text", true), el("span", { texto: "Gerar a apostila sem infográfico" })]),
+    ]),
+    voltar ? el("button", { class: "btn btn--fantasma btn--bloco", onclick: voltar }, ["Voltar à lista"]) : el("button", { class: "btn btn--fantasma btn--bloco", onclick: fecharFolha }, ["Cancelar"]),
+  ]);
+}
+async function criarPosterDepoisApostila(nome, depois, voltar) {
+  // resposta na hora: antes de começar, o servidor confere as contas (leva alguns segundos)
+  abrirFolha([
+    el("h2", { id: "folha-titulo", texto: "Criando o infográfico" }),
+    el("p", { class: "meta", texto: "Depois a Apostila Técnica Interativa sai sozinha, já com ele." }),
+    el("p", { class: "con-texto exp-conferindo" }, [icone("circle-notch"), " Conferindo se as contas do Claude e do ChatGPT estão funcionando..."]),
+  ]);
+  let d;
+  try { d = await (await api("/api/poster", { method: "POST", body: JSON.stringify({ nome }) })).json(); }
+  catch (e) { return aviso("Não deu para criar o infográfico: " + e.message, "warning"); }
+  if (!d.ok && d.conta) return abrirReconectar(d.conta, { motivo: d.erro, rotulo: "Criar o infográfico e a apostila", aoConectar: () => criarPosterDepoisApostila(nome, depois, voltar) });
+  if (!d.ok) return aviso("Não deu para criar o infográfico: " + (d.erro || ""), "warning");
+  esperarPosterDepoisApostila(nome, depois, voltar);
+}
+function esperarPosterDepoisApostila(nome, depois, voltar) {
+  const caixa = el("div", { class: "exp-espera" });
+  const corpo = [
+    el("h2", { id: "folha-titulo", texto: "Criando o infográfico" }),
+    el("p", { class: "meta", texto: "Depois a Apostila Técnica Interativa sai sozinha, já com ele." }),
+    caixa,
+    el("button", { class: "btn btn--fantasma btn--bloco", onclick: () => { parar = true; depois(); } }, ["Não esperar: gerar a apostila agora, sem infográfico"]),
+  ];
+  let parar = false;
+  abrirFolha(corpo, { aoFechar: () => { parar = true; } });
+  const passo = async () => {
+    if (parar) return;
+    let p;
+    try { p = await (await api(`/api/poster?nome=${encodeURIComponent(nome)}`)).json(); } catch { p = null; }
+    if (parar) return;
+    if (p && p.poster && p.poster.imagem && !POSTER_ANDAMENTO.includes(p.estado)) { parar = true; aviso("Infográfico pronto. Agora a apostila.", "check-circle"); return depois(); }
+    if (p && p.estado === "erro") {
+      parar = true;
+      if (p.conta) return abrirReconectar(p.conta, { motivo: p.erro, rotulo: "Criar o infográfico e a apostila", aoConectar: () => criarPosterDepoisApostila(nome, depois, voltar) });
+      return abrirFolha([
+        el("h2", { id: "folha-titulo", texto: "O infográfico não saiu" }),
+        el("p", { class: "con-problema", role: "alert" }, [icone("warning-circle", true), el("span", { texto: p.erro || "deu erro" })]),
+        el("div", { class: "exp-zip" }, [
+          el("button", { class: "btn btn--primario btn--bloco", onclick: depois }, [icone("book-open-text", true), "Gerar a apostila sem infográfico"]),
+          el("button", { class: "btn btn--secundario btn--bloco", onclick: () => criarPosterDepoisApostila(nome, depois, voltar) }, [icone("arrow-clockwise"), "Tentar o infográfico de novo"]),
+        ]),
+      ]);
+    }
+    caixa.replaceChildren(...[
+      typeof (p && p.progresso) === "number" ? barraProgresso(p.progresso, { estimado: !!p.estimado }) : null,
+      el("p", { class: "con-texto", texto: (p && p.etapa) || "Na fila" }),
+    ].filter(Boolean));
+    setTimeout(passo, 3000);
+  };
+  passo();
+}
+
 // href: endereço do arquivo; preparar: endereço que só responde quando o arquivo está pronto (apostila);
 // grande: vídeo/ZIP (não passa pela memória do app: o botão aponta direto para o endereço).
 export async function entregarArquivo({ href, rotulo, preparar = null, grande = false, voltar = null }) {
@@ -85,17 +157,30 @@ export async function entregarArquivo({ href, rotulo, preparar = null, grande = 
     }
     clearInterval(relogio);
     status.textContent = `Pronto: ${nomeArq || rotulo}${arquivo ? ` (${tamanho(arquivo.size)})` : ""}.`;
-    const salvar = el("a", { class: "btn btn--primario btn--grande btn--bloco", href: salvarHref, download: nomeArq || "", onclick: () => aviso(`Salvando: ${nomeArq || rotulo}`, "download-simple") }, [
-      icone("download-simple", true), el("span", { texto: toque() ? "Salvar no celular" : "Salvar de novo" }),
+    const compartilhar = arquivo && navigator.canShare && navigator.canShare({ files: [arquivo] })
+      ? el("button", { class: "btn btn--secundario btn--bloco", onclick: () => navigator.share({ files: [arquivo], title: nomeArq }).catch(() => {}) }, [icone("share-network", true), el("span", { texto: "Abrir ou compartilhar" })])
+      : null;
+    // depois de salvar, a tela diz que salvou e o botão vira um discreto "baixar de novo"
+    // (antes ficava um botão grande "Salvar de novo", que parecia pedir para salvar outra vez)
+    const salvo = () => {
+      status.textContent = `Salvo: ${nomeArq || rotulo}${arquivo ? ` (${tamanho(arquivo.size)})` : ""}. Está na pasta Downloads.`;
+      acoes.replaceChildren(...[compartilhar, el("a", { class: "btn btn--fantasma btn--bloco", href: salvarHref, download: nomeArq || "" }, [icone("arrow-clockwise"), "Não apareceu? Baixar de novo"])].filter(Boolean));
+    };
+    const salvar = el("a", { class: "btn btn--primario btn--grande btn--bloco", href: salvarHref, download: nomeArq || "", onclick: () => { aviso(`Salvando: ${nomeArq || rotulo}`, "download-simple"); setTimeout(salvo, 300); } }, [
+      icone("download-simple", true), el("span", { texto: "Salvar no celular" }),
     ]);
-    acoes.append(salvar);
-    if (arquivo && navigator.canShare && navigator.canShare({ files: [arquivo] })) {
-      acoes.append(el("button", { class: "btn btn--secundario btn--bloco", onclick: () => navigator.share({ files: [arquivo], title: nomeArq }).catch(() => {}) }, [
-        icone("share-network", true), el("span", { texto: "Abrir ou compartilhar" }),
-      ]));
+    if (toque()) {
+      acoes.append(...[salvar, compartilhar].filter(Boolean));
+      status.textContent += " Toque em Salvar no celular: o arquivo vai para a pasta Downloads.";
+    } else {
+      // computador: baixa sozinho uma vez e a tela se fecha
+      const a = el("a", { href: salvarHref, download: nomeArq || "", hidden: true });
+      document.body.append(a); a.click(); a.remove();
+      aviso(`Salvo na pasta Downloads: ${nomeArq || rotulo}`, "download-simple");
+      salvo();
+      const corpo = document.querySelector("#folha-corpo");
+      setTimeout(() => { if (status.isConnected && corpo.contains(status)) fecharFolha(); }, 2500);
     }
-    if (toque()) status.textContent += " Toque em Salvar no celular: o arquivo vai para a pasta Downloads.";
-    else salvar.click(); // computador: baixa sozinho, como antes
   } catch (e) {
     clearInterval(relogio);
     status.textContent = "Não deu para preparar: " + e.message;
@@ -117,7 +202,7 @@ export async function abrirExportar(nome, titulo) {
   const baixarItem = (id) => {
     const i = porId[id];
     if (id === "video" || id === "video-legendado") return baixar(url(nome, id), i.rotulo);
-    if (id === "apostila") return entregarArquivo({ href: urlApostila(nome), preparar: urlApostila(nome, "&preparar=1"), rotulo: i.rotulo, voltar });
+    if (id === "apostila") return baixarApostila(nome, { voltar, rotulo: i.rotulo });
     return entregarArquivo({ href: url(nome, id), rotulo: i.rotulo, voltar });
   };
   // ZIP: se a apostila entra e ainda não existe, o servidor demora para responder; monta antes e mostra o botão pronto
