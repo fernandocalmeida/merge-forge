@@ -93,6 +93,10 @@ merge-forge/
 
 O Merge Forge é uma ferramenta de **estudo**. No primeiro acesso, o app pede o aceite do **[Termo de uso](TERMOS-DE-USO.md)**. Use com conteúdo próprio, gravações de aula ou conteúdo que você tenha direito de usar. Baixar conteúdo de terceiros pode violar os termos de uso das plataformas e direitos autorais: **a responsabilidade pelo uso é de quem usa.** O download depende de ferramentas de terceiros (yt-dlp) e pode parar de funcionar quando as plataformas mudam; não há garantia de funcionamento.
 
+## Como contribuir
+
+Melhorias são bem-vindas, mas nada entra direto: você trabalha na sua cópia (fork) e envia um **Pull Request**, que só é incluído depois de revisado e aprovado pela Merge IA. Antes de começar, leia o **[guia de contribuição](CONTRIBUTING.md)**: ele explica o passo a passo, o que é aceito e como relatar falhas de segurança em particular.
+
 ## Licença
 
 Este projeto é licenciado sob a **[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)**. Veja o arquivo `LICENSE`.
