@@ -72,6 +72,8 @@ audio.est-midia { aspect-ratio: auto; background: var(--surface-2); padding: var
 .est-botoes { display: flex; flex-wrap: wrap; gap: var(--s-2); padding: var(--s-3) var(--s-4) var(--s-4); }
 .est-botoes .btn--secundario, .est-botoes .btn--primario { flex: 1 1 120px; height: 42px; white-space: nowrap; padding: 0 var(--s-3); }
 .est-botoes .btn--icone { flex: none; }
+.est-botoes .est-excluir { flex: none; height: 42px; padding: 0 var(--s-3); color: var(--ink-2); }
+.est-botoes .est-excluir:hover { color: var(--danger); }
 .est-botoes .btn--apostila { flex: 1 1 100%; order: 9; min-width: 0; } /* nome longo: linha própria, embaixo */
 .est-botoes .btn .rotulo { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .est-nota { font-size: 13px; color: var(--ink-3); }

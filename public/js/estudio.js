@@ -1,5 +1,5 @@
 // Estúdio IA: escolhe um vídeo, gera o estudo e mostra em 7 visões interativas.
-import { $, $$, el, icone, api, aviso, duracao, linkArquivo, irPara, barraProgresso } from "./app.js";
+import { $, $$, el, icone, api, aviso, duracao, linkArquivo, irPara, barraProgresso, excluirVideo } from "./app.js";
 import { abrirConexoes, aoMudarConexao, abrirReconectar } from "./conexoes.js";
 import { montarPoster } from "./poster.js";
 import { abrirExportar, baixarApostila } from "./exportar.js";
@@ -172,6 +172,11 @@ function desenhar(it, d) {
       estudo ? botaoApostila(it, d.apostilaBloqueada) : null,
       estudo ? botaoCopiar() : null,
       estudo ? el("button", { class: "btn btn--fantasma btn--icone", "aria-label": "Gerar de novo", title: "Gerar de novo", onclick: () => gerar(it, true) }, [icone("arrow-clockwise")]) : null,
+      // excluir o vídeo daqui mesmo (mesma confirmação da Biblioteca); depois volta para a escolha de vídeo
+      el("button", { class: "btn btn--fantasma est-excluir", title: "Excluir este vídeo e tudo o que foi gerado dele", onclick: () => excluirVideo(it.nome, () => {
+        pararSondagem(); atual = null; estudo = null;
+        if (modoPainel) { if (aoFecharPainel) aoFecharPainel(); } else escolher();
+      }) }, [icone("trash"), el("span", { texto: "Excluir vídeo" })]),
     ]),
   );
 

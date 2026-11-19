@@ -834,11 +834,16 @@ $("#sel-todos").addEventListener("click", () => {
   renderizarBiblioteca();
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && selecionando && $("#folha-fundo").dataset.aberta !== "1") sairSelecao(); });
-$("#sel-excluir").addEventListener("click", confirmarExclusaoEmConjunto);
+$("#sel-excluir").addEventListener("click", () => confirmarExclusaoEmConjunto());
 
-async function confirmarExclusaoEmConjunto() {
+// Excluir um vídeo só (lixeira da Biblioteca, botão do Estúdio): mesma confirmação da exclusão em conjunto.
+// depois: chamado quando deu certo (ex.: o Estúdio volta para a escolha de vídeo)
+export function excluirVideo(nome, depois = null) { return confirmarExclusaoEmConjunto([nome], depois); }
+
+// nomes: exclui só esses (senão, os marcados no modo Selecionar)
+async function confirmarExclusaoEmConjunto(nomes = null, depois = null) {
   await carregarBiblioteca(); // estado atual (ex.: estudo que começou agora), para o aviso sair certo
-  const itens = itensBiblioteca.filter((it) => selecionados.has(it.nome));
+  const itens = itensBiblioteca.filter((it) => (nomes ? nomes.includes(it.nome) : selecionados.has(it.nome)));
   if (!itens.length) return;
   const q = itens.length;
   const emEstudo = itens.filter((it) => it.estudando).length;
@@ -862,8 +867,9 @@ async function confirmarExclusaoEmConjunto() {
     fecharFolha();
     if (falhas.length) aviso(`${q - falhas.length} de ${q} excluídos. Não deu para excluir: ${falhas.slice(0, 2).join(", ")}${falhas.length > 2 ? "…" : ""}`, "warning");
     else aviso(q === 1 ? "1 vídeo excluído." : `${q} vídeos excluídos.`, "trash");
-    if (!falhas.length) sairSelecao();
-    carregarBiblioteca();
+    if (!falhas.length && !nomes) sairSelecao();
+    await carregarBiblioteca();
+    if (!falhas.length && depois) depois();
   });
   abrirFolha([
     el("h2", { id: "folha-titulo", texto: q === 1 ? "Excluir 1 vídeo?" : `Excluir ${q} vídeos?` }),
@@ -953,7 +959,10 @@ function cartaoMidia(it, i) {
     b.setAttribute("aria-pressed", String(selecionados.has(it.nome)));
     atualizarBarraSelecao();
   });
-  return b;
+  // lixeira sempre à vista no canto da capa (fora do botão do cartão, para não abrir as ações junto)
+  const lixeira = el("button", { class: "midia-excluir", "aria-label": `Excluir ${nomeLimpo(it)}`, title: "Excluir vídeo", hidden: selecionando || null }, [icone("trash", true)]);
+  lixeira.addEventListener("click", (e) => { e.stopPropagation(); excluirVideo(it.nome); });
+  return el("div", { class: "midia-caixa" }, [b, lixeira]);
 }
 
 function abrirAcoes(it) {
