@@ -134,7 +134,7 @@ function secaoClaude(s) {
   if (problema) filhos.push(problema);
   const x = s.saude && s.saude.claude;
   if (conectado) {
-    filhos.push(el("p", { class: "con-texto", texto: (s.tokenClaude ? "Conectada por chave (token) do Claude Code." : "Conectada pelo login do Claude Code deste computador.") + (x && x.ok ? ` Conferida ${quando(x.em)}.` : "") }));
+    filhos.push(el("p", { class: "con-texto", texto: (s.tokenClaude ? "Conectada por chave (token) do Claude Code." : "Conectada pelo login do Claude Code deste computador.") + (x && x.ok ? ` Conferida ${quando(x.em)}.` + (x.modelo && x.modelo !== "padrão" ? ` Modelo em uso: ${x.modelo}.` : "") : "") }));
   } else if (s.claudeSemSistema && c.logado) {
     filhos.push(el("p", { class: "con-texto", texto: "Desconectada: o app não usa mais o login do Claude Code deste computador." }),
       el("button", { class: "btn btn--secundario", onclick: () => acao(() => postar("/api/ia/claude/usar-sistema"), "Login do computador em uso de novo.", "claude") }, [icone("arrow-counter-clockwise"), "Usar de novo o login do computador"]));

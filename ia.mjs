@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
+import net from "node:net";
 import Anthropic from "@anthropic-ai/sdk";
 
 const ICONES = ["ideia", "alerta", "dinheiro", "tempo", "pessoas", "crescimento", "ferramenta", "alvo", "livro", "coracao", "foguete", "check"];
@@ -602,6 +603,7 @@ function montarPedido(transcricao, meta) {
 // 3a) SDK da Anthropic: chave de API ou login do `ant` (o construtor sem argumentos resolve os dois)
 async function viaApi(cfg, pedido, esquema = SCHEMA, sistema = SISTEMA) {
   conferirCancelado();
+  await conferirBaseUrl();
   const client = new Anthropic();
   const stream = client.beta.messages.stream({
     model: cfg.modelo,
@@ -626,7 +628,23 @@ async function viaApi(cfg, pedido, esquema = SCHEMA, sistema = SISTEMA) {
 // Modelo: só passamos --model se a pessoa escolheu um (MODELO_IA). Sem isso, o Claude Code usa o
 // padrão da própria instalação, que sempre é um modelo que aquela versão aceita.
 // Se o CLI recusar o modelo escolhido (versão antiga), tentamos de novo sem --model.
-async function viaClaudeCli(cfg, pedido, pasta, modelo = cfg.modeloCli, esquema = SCHEMA, sistema = SISTEMA, ordem = "Gere o material de estudo da transcrição recebida, no formato pedido.") {
+// Modelo que a assinatura não libera (ex.: "Fable requires usage credits", quando o padrão do Claude Code
+// da pessoa é um modelo que cobra à parte): o app passa para o próximo modelo incluído na assinatura
+// e lembra da troca enquanto estiver ligado.
+const MODELOS_RESERVA = ["opus", "sonnet"];
+const modelosRecusados = new Set();
+let modeloReserva = null;
+const modeloRecusado = (motivo) => /usage credits|switch to another model|requires .{0,40}credits|not available (on|for) your|does not support this model|newer is required|model.{0,20}not (found|available)/i.test(motivo);
+function trocarModelo(atual) {
+  modelosRecusados.add(atual || "padrao");
+  modeloReserva = MODELOS_RESERVA.find((m) => !modelosRecusados.has(m)) || null;
+  if (modeloReserva) console.warn(`a conta Claude recusou o modelo ${atual || "padrão"}; usando ${modeloReserva}`);
+  return modeloReserva;
+}
+export const modeloEmUso = (cfg) => cfg.modeloCli || modeloReserva || null;
+
+async function viaClaudeCli(cfg, pedido, pasta, modelo = modeloEmUso(cfg), esquema = SCHEMA, sistema = SISTEMA, ordem = "Gere o material de estudo da transcrição recebida, no formato pedido.") {
+  await conferirBaseUrl();
   let saida;
   try {
     saida = await rodar(cfg.claude, [
@@ -653,9 +671,10 @@ async function viaClaudeCli(cfg, pedido, pasta, modelo = cfg.modeloCli, esquema 
   try { d = JSON.parse(saida); } catch { throw new Error("o claude devolveu uma resposta que nao deu pra ler"); }
   if (d.is_error) {
     const motivo = String(d.result || d.subtype || "erro desconhecido");
-    if (modelo && /does not support this model|newer is required|model.*not (found|available)/i.test(motivo)) {
-      console.warn(`claude recusou o modelo ${modelo}; usando o padrão da instalação`);
-      return viaClaudeCli(cfg, pedido, pasta, null, esquema, sistema, ordem);
+    if (modeloRecusado(motivo)) {
+      const outro = trocarModelo(modelo);
+      if (outro && outro !== modelo) return viaClaudeCli(cfg, pedido, pasta, outro, esquema, sistema, ordem);
+      throw Object.assign(new Error("a assinatura Claude não liberou nenhum modelo para o app (" + motivo.slice(0, 140) + ")"), { conta: "claude" });
     }
     if (/auth|login|OAuth|401|credential|token/i.test(motivo)) throw Object.assign(new Error("a conta Claude não está mais autorizada (login expirado ou cancelado): entre de novo na conta Claude (" + motivo.slice(0, 120) + ")"), { conta: "claude" });
     throw new Error("o claude falhou: " + motivo.slice(0, 200));
@@ -682,6 +701,34 @@ async function existe(cmd, args = ["--version"]) {
 }
 
 // Login do Claude Code: token conectado pela tela (CLAUDE_CODE_OAUTH_TOKEN) ou `claude` já logado no servidor.
+// ANTHROPIC_BASE_URL apontando para um endereço deste computador que não responde (sobra de outro programa,
+// como um proxy desligado) faz o Claude Code esperar até o tempo acabar ("claude demorou demais").
+// Nesse caso o app ignora o endereço e usa o oficial da Anthropic; se o endereço responder, é respeitado.
+const BASE_URL_ORIGINAL = process.env.ANTHROPIC_BASE_URL || "";
+let baseConferida = 0;
+export async function conferirBaseUrl() {
+  if (!BASE_URL_ORIGINAL || Date.now() - baseConferida < 30000) return;
+  baseConferida = Date.now();
+  let u;
+  try { u = new URL(BASE_URL_ORIGINAL); } catch { return; }
+  const host = u.hostname.replace(/^[|]$/g, "");
+  if (!/^(127.|localhost$|::1$|0.0.0.0$)/.test(host)) return; // endereço de fora: não dá para saber, respeita
+  const porta = Number(u.port || (u.protocol === "https:" ? 443 : 80));
+  const vivo = await new Promise((ok) => {
+    const c = net.connect({ host: host === "localhost" ? "127.0.0.1" : host, port: porta });
+    const fim = (v) => { c.destroy(); ok(v); };
+    c.setTimeout(1500, () => fim(false));
+    c.on("connect", () => fim(true));
+    c.on("error", () => fim(false));
+  });
+  if (vivo) process.env.ANTHROPIC_BASE_URL = BASE_URL_ORIGINAL;
+  else {
+    if (process.env.ANTHROPIC_BASE_URL) console.warn(`ANTHROPIC_BASE_URL=${BASE_URL_ORIGINAL} não responde neste computador: o app usa o endereço oficial da Anthropic`);
+    delete process.env.ANTHROPIC_BASE_URL;
+  }
+}
+conferirBaseUrl();
+
 export async function statusClaude(cfg) {
   try {
     const saida = await rodar(cfg.claude, ["auth", "status", "--json"], { timeoutMs: 20000 });
@@ -707,21 +754,32 @@ async function detectarProvedor(cfg) {
 // ---------- testes usados pela tela "Conectar Claude" antes de salvar ----------
 // Pede um "OK" de verdade ao Claude: é o único jeito de saber se o login ainda vale
 // ("claude auth status" diz "logado" mesmo com o login expirado).
-async function testarClaudeCli(cfg, env) {
+async function testarClaudeCli(cfg, env, modelo = modeloEmUso(cfg)) {
+  await conferirBaseUrl();
   let saida;
   try {
     saida = await rodar(cfg.claude, [
       "-p", "Responda apenas com a palavra OK.",
+      ...(modelo ? ["--model", modelo] : []),
       "--output-format", "json", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
-    ], { timeoutMs: 90000, env });
+    ], { timeoutMs: 60000, env });
   } catch (e) {
     if (e.code === "ENOENT") throw new Error("o Claude Code não está instalado neste computador");
+    if (/demorou demais/.test(e.message)) throw new Error("o Claude Code não respondeu em 1 minuto (sem internet, ou um programa/proxy no caminho)");
     saida = e.saida || "";
     if (!saida) throw e;
   }
   let d;
   try { d = JSON.parse(saida); } catch { throw new Error("o Claude respondeu algo inesperado"); }
-  if (d.is_error) throw new Error("a conta Claude recusou: " + String(d.result || d.subtype).slice(0, 160));
+  if (d.is_error) {
+    const motivo = String(d.result || d.subtype || "");
+    if (modeloRecusado(motivo)) {
+      const outro = trocarModelo(modelo);
+      if (outro && outro !== modelo) return testarClaudeCli(cfg, env, outro);
+    }
+    throw new Error("a conta Claude recusou: " + motivo.slice(0, 160));
+  }
+  return { modelo: modelo || "padrão" };
 }
 export const testarTokenClaude = (cfg, token) => testarClaudeCli(cfg, { CLAUDE_CODE_OAUTH_TOKEN: token, ANTHROPIC_API_KEY: null });
 
@@ -751,8 +809,8 @@ export async function testarClaudeAgora(cfg) {
       try { await testarChaveApi(process.env.ANTHROPIC_API_KEY); } catch (e) { throw new Error("a chave da API Anthropic foi recusada (" + String(e.status || e.message).slice(0, 80) + ")"); }
       return { via: "api" };
     }
-    await testarClaudeCli(cfg, process.env.CLAUDE_CODE_OAUTH_TOKEN ? { ANTHROPIC_API_KEY: null } : undefined);
-    return { via: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "token" : "login" };
+    const r = await testarClaudeCli(cfg, process.env.CLAUDE_CODE_OAUTH_TOKEN ? { ANTHROPIC_API_KEY: null } : undefined);
+    return { via: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "token" : "login", modelo: r && r.modelo };
   });
 }
 export async function testarGroqAgora() {
@@ -975,7 +1033,7 @@ export function criarEstudos(cfg) {
         const pedido = montarPedido(transcricao, meta);
         estudo = provedor === "claude-cli" ? await viaClaudeCli(cfg, pedido, pasta) : await viaApi(cfg, pedido);
       }
-      const final = { ...validar(estudo), transcricao, idiomaOriginal: idioma, ...(transcricaoOriginal ? { transcricaoOriginal, traduzida: true } : {}), fonte, provedor, modelo: provedor === "demo" ? null : provedor === "claude-cli" ? (cfg.modeloCli || "padrão do Claude Code") : cfg.modelo, geradoEm: new Date().toISOString() };
+      const final = { ...validar(estudo), transcricao, idiomaOriginal: idioma, ...(transcricaoOriginal ? { transcricaoOriginal, traduzida: true } : {}), fonte, provedor, modelo: provedor === "demo" ? null : provedor === "claude-cli" ? (modeloEmUso(cfg) || "padrão do Claude Code") : cfg.modelo, geradoEm: new Date().toISOString() };
       if (ctx?.cancelado) return;
       await writeFile(destino + ".tmp", JSON.stringify(final));
       await rename(destino + ".tmp", destino);
@@ -1269,7 +1327,7 @@ export function criarInfograficos(cfg) {
         ].join("\n");
         let p;
         if (provedorTexto === "demo") p = infoDemo(estudo);
-        else if (provedorTexto === "claude-cli") p = await viaClaudeCli(cfg, pedido, pasta, cfg.modeloCli, ESQUEMA_INFO, SISTEMA_INFO);
+        else if (provedorTexto === "claude-cli") p = await viaClaudeCli(cfg, pedido, pasta, modeloEmUso(cfg), ESQUEMA_INFO, SISTEMA_INFO);
         else p = await viaApi(cfg, pedido, ESQUEMA_INFO, SISTEMA_INFO);
         if (!p || !p.prompt) throw new Error("a IA não devolveu o roteiro do infográfico");
         estudo = await ler();
