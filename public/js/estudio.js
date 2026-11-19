@@ -2,7 +2,7 @@
 import { $, $$, el, icone, api, aviso, duracao, linkArquivo, irPara, barraProgresso } from "./app.js";
 import { abrirConexoes, aoMudarConexao } from "./conexoes.js";
 import { montarPoster } from "./poster.js";
-import { abrirExportar } from "./exportar.js";
+import { abrirExportar, entregarArquivo } from "./exportar.js";
 import { chipRede, redeDoNome } from "./redes.js";
 
 const ICONES_DESTAQUE = {
@@ -389,25 +389,12 @@ function botaoApostila(it, bloqueio) {
     b.addEventListener("click", () => aviso("Apostila Técnica Interativa bloqueada: " + bloqueio + ".", "lock-simple"));
     return b;
   }
-  b.addEventListener("click", async () => {
-    if (b.dataset.estado === "carregando") return;
-    b.dataset.estado = "carregando"; b.disabled = true;
-    const t0 = Date.now();
-    const relogio = setInterval(() => { $(".rotulo", b).textContent = `Montando ${Math.round((Date.now() - t0) / 1000)}s`; }, 500);
-    try {
-      const d = await (await api(`/api/apostila?nome=${encodeURIComponent(it.nome)}&preparar=1`)).json();
-      if (!d.ok) throw new Error(d.erro || "não deu para montar");
-      const a = document.createElement("a");
-      a.href = `/api/apostila?nome=${encodeURIComponent(it.nome)}`; a.download = "";
-      document.body.append(a); a.click(); a.remove();
-      aviso("Apostila Técnica Interativa pronta. Baixando o PDF.", "book-open-text");
-    } catch (e) {
-      aviso("Não deu para gerar a apostila: " + e.message, "warning");
-    } finally {
-      clearInterval(relogio);
-      b.dataset.estado = ""; b.disabled = false; $(".rotulo", b).textContent = "Apostila Técnica Interativa";
-    }
-  });
+  // o app prepara e busca o PDF (no celular o Android não entregava o download depois da espera)
+  b.addEventListener("click", () => entregarArquivo({
+    href: `/api/apostila?nome=${encodeURIComponent(it.nome)}`,
+    preparar: `/api/apostila?nome=${encodeURIComponent(it.nome)}&preparar=1`,
+    rotulo: "Apostila Técnica Interativa",
+  }));
   return b;
 }
 

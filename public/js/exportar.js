@@ -38,6 +38,70 @@ function baixar(href, rotulo) {
   aviso(`Baixando: ${rotulo}`, "download-simple");
 }
 
+// Celular (tela de toque): o Android não entregava itens soltos nem a apostila quando o download dependia de
+// espera no servidor ou de redirecionamento. Aqui o app prepara e busca o arquivo ele mesmo e mostra
+// "Salvar no celular" (toque novo, arquivo já pronto) e "Abrir ou compartilhar". No computador salva sozinho.
+const toque = () => matchMedia("(pointer: coarse)").matches;
+const urlApostila = (nome, extra = "") => `/api/apostila?nome=${encodeURIComponent(nome)}${extra}`;
+function nomeDoCabecalho(cd) {
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(cd || "");
+  if (m) { try { return decodeURIComponent(m[1]); } catch { /* usa o outro */ } }
+  const n = /filename="([^"]+)"/i.exec(cd || "");
+  return n ? n[1] : "arquivo";
+}
+
+// href: endereço do arquivo; preparar: endereço que só responde quando o arquivo está pronto (apostila);
+// grande: vídeo/ZIP (não passa pela memória do app: o botão aponta direto para o endereço).
+export async function entregarArquivo({ href, rotulo, preparar = null, grande = false, voltar = null }) {
+  let blobUrl = null;
+  const status = el("p", { class: "con-texto exp-entrega-status", texto: `Preparando ${rotulo}...` });
+  const acoes = el("div", { class: "exp-zip" });
+  abrirFolha([
+    el("h2", { id: "folha-titulo", texto: "Baixar" }),
+    el("p", { class: "meta", texto: rotulo }),
+    status,
+    acoes,
+    voltar ? el("button", { class: "btn btn--fantasma btn--bloco", onclick: voltar }, ["Voltar à lista"]) : el("button", { class: "btn btn--fantasma btn--bloco", onclick: fecharFolha }, ["Fechar"]),
+  ], { aoFechar: () => { if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 60000); } });
+  const t0 = Date.now();
+  const relogio = setInterval(() => { status.textContent = `Preparando ${rotulo}... ${Math.round((Date.now() - t0) / 1000)}s`; }, 500);
+  try {
+    if (preparar) {
+      const d = await (await api(preparar)).json();
+      if (!d.ok) throw new Error(d.erro || "não deu para montar");
+    }
+    let salvarHref = href, nomeArq = "", arquivo = null;
+    if (!grande) {
+      const r = await api(href);
+      const tipo = r.headers.get("content-type") || "";
+      if (!r.ok || tipo.includes("application/json")) {
+        const erro = await r.json().then((x) => x.erro).catch(() => null);
+        throw new Error(erro || `erro ${r.status}`);
+      }
+      const blob = await r.blob();
+      nomeArq = nomeDoCabecalho(r.headers.get("content-disposition"));
+      arquivo = new File([blob], nomeArq, { type: blob.type || "application/octet-stream" });
+      salvarHref = blobUrl = URL.createObjectURL(blob);
+    }
+    clearInterval(relogio);
+    status.textContent = `Pronto: ${nomeArq || rotulo}${arquivo ? ` (${tamanho(arquivo.size)})` : ""}.`;
+    const salvar = el("a", { class: "btn btn--primario btn--grande btn--bloco", href: salvarHref, download: nomeArq || "", onclick: () => aviso(`Salvando: ${nomeArq || rotulo}`, "download-simple") }, [
+      icone("download-simple", true), el("span", { texto: toque() ? "Salvar no celular" : "Salvar de novo" }),
+    ]);
+    acoes.append(salvar);
+    if (arquivo && navigator.canShare && navigator.canShare({ files: [arquivo] })) {
+      acoes.append(el("button", { class: "btn btn--secundario btn--bloco", onclick: () => navigator.share({ files: [arquivo], title: nomeArq }).catch(() => {}) }, [
+        icone("share-network", true), el("span", { texto: "Abrir ou compartilhar" }),
+      ]));
+    }
+    if (toque()) status.textContent += " Toque em Salvar no celular: o arquivo vai para a pasta Downloads.";
+    else salvar.click(); // computador: baixa sozinho, como antes
+  } catch (e) {
+    clearInterval(relogio);
+    status.textContent = "Não deu para preparar: " + e.message;
+  }
+}
+
 export async function abrirExportar(nome, titulo) {
   abrirFolha([el("h2", { id: "folha-titulo", texto: "Baixar" }), el("p", { class: "meta", texto: "Carregando a lista..." })]);
   let d;
@@ -48,7 +112,20 @@ export async function abrirExportar(nome, titulo) {
   const temVideo = !!porId.video;
   // um arquivo só (ex.: vídeo sem estudo) não vira ZIP: o servidor manda o arquivo solto
   const soUm = d.itens.length === 1 ? d.itens[0] : null;
-  const zip = (comVideo) => el("button", { class: "btn " + (comVideo ? "btn--primario btn--grande" : "btn--secundario") + " btn--bloco", onclick: () => baixar(soUm && comVideo ? url(nome, soUm.id) : url(nome, "tudo", comVideo ? "" : "&video=0"), soUm && comVideo ? soUm.rotulo : comVideo ? "tudo em ZIP" : "materiais em ZIP") }, [
+  const voltar = () => abrirExportar(nome, titulo);
+  // um item sozinho: vídeo vai direto (grande demais para a memória do app); o resto passa por entregarArquivo
+  const baixarItem = (id) => {
+    const i = porId[id];
+    if (id === "video" || id === "video-legendado") return baixar(url(nome, id), i.rotulo);
+    if (id === "apostila") return entregarArquivo({ href: urlApostila(nome), preparar: urlApostila(nome, "&preparar=1"), rotulo: i.rotulo, voltar });
+    return entregarArquivo({ href: url(nome, id), rotulo: i.rotulo, voltar });
+  };
+  // ZIP: se a apostila entra e ainda não existe, o servidor demora para responder; monta antes e mostra o botão pronto
+  const apostilaPendente = (ids) => porId.apostila && porId.apostila.geraNaHora && !porId.apostila.bloqueada && (!ids || ids.includes("apostila"));
+  const baixarZip = (href, rotulo, ids) => apostilaPendente(ids)
+    ? entregarArquivo({ href, rotulo, grande: true, preparar: urlApostila(nome, "&preparar=1"), voltar })
+    : baixar(href, rotulo);
+  const zip = (comVideo) => el("button", { class: "btn " + (comVideo ? "btn--primario btn--grande" : "btn--secundario") + " btn--bloco", onclick: () => soUm && comVideo ? baixarItem(soUm.id) : baixarZip(url(nome, "tudo", comVideo ? "" : "&video=0"), comVideo ? "tudo em ZIP" : "materiais em ZIP", null) }, [
     icone(soUm && comVideo ? "download-simple" : comVideo ? "file-zip" : "files", comVideo),
     el("span", { texto: soUm && comVideo ? `Baixar ${soUm.rotulo.toLowerCase()} (${tamanho(soUm.tamanho)})` : comVideo ? `Baixar tudo (ZIP, ${tamanho(d.totalZip)})` : `Só os materiais, sem o vídeo (${tamanho(d.totalSemVideo)})` }),
   ]);
@@ -64,10 +141,10 @@ export async function abrirExportar(nome, titulo) {
     const unico = marcados.size === 1 ? [...marcados][0] : null;
     barra.replaceChildren(
       unico
-        ? el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixar(url(nome, unico), porId[unico].rotulo) }, [
+        ? el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixarItem(unico) }, [
           icone("download-simple", true), el("span", { class: "exp-sel-rotulo" }, ["Baixar 1 arquivo", el("small", { texto: porId[unico].geraNaHora ? "gera na hora" : tamanho(total) })]),
         ])
-        : el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixar(url(nome, "tudo", "&itens=" + encodeURIComponent([...marcados].join(","))), `${marcados.size} itens em ZIP`) }, [
+        : el("button", { class: "btn btn--primario btn--bloco", onclick: () => baixarZip(url(nome, "tudo", "&itens=" + encodeURIComponent([...marcados].join(","))), `${marcados.size} itens em ZIP`, [...marcados]) }, [
           icone("file-zip", true), el("span", { class: "exp-sel-rotulo" }, [`Baixar ${marcados.size} em ZIP`, el("small", { texto: tamanho(total) })]),
         ]),
       el("button", { class: "btn btn--fantasma", onclick: () => { marcados.clear(); lista.querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = false; }); atualizarBarra(); } }, ["Limpar"]),
@@ -87,7 +164,7 @@ export async function abrirExportar(nome, titulo) {
     caixa.addEventListener("change", () => { if (caixa.checked) marcados.add(id); else marcados.delete(id); atualizarBarra(); });
     return el("li", { class: "exp-linha" }, [
       el("label", { class: "exp-marca", title: "Marcar para baixar junto" }, [caixa]),
-      el("a", { class: "exp-item" + (id === "apostila" ? " exp-item--destaque" : ""), href: url(nome, id), download: "", onclick: () => aviso(i.geraNaHora ? "Montando a Apostila Técnica Interativa. O download começa em alguns segundos." : `Baixando: ${i.rotulo}`, i.geraNaHora ? "book-open-text" : "download-simple") }, [
+      el("a", { class: "exp-item" + (id === "apostila" ? " exp-item--destaque" : ""), href: url(nome, id), download: "", onclick: (e) => { e.preventDefault(); baixarItem(id); } }, [
         el("span", { class: "exp-ic" }, [icone(ICONES[id] || "file", true)]),
         el("span", { class: "exp-txt" }, [el("strong", { texto: i.rotulo }), el("small", { texto: DICAS[id] || i.arquivo })]),
         el("span", { class: "exp-tam mono", texto: i.geraNaHora ? "gera na hora" : tamanho(i.tamanho) }),
