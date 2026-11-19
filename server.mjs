@@ -674,11 +674,42 @@ function abrirTerminalLogin() {
   p.unref();
 }
 
+// ---------- trava contra outros sites ----------
+// Sem esta trava, um site qualquer aberto no navegador poderia mandar pedidos para o app deste computador
+// (iniciar downloads, gastar a IA, trocar o login do Claude). Duas regras:
+// 1) pedido para a API ou para os arquivos que venha de OUTRO site é recusado (cabeçalhos Origin e Sec-Fetch-Site,
+//    que o navegador preenche sozinho e a página não consegue falsificar);
+// 2) sem senha, o endereço digitado (Host) tem de ser este computador ou um IP; nome de domínio desconhecido é
+//    recusado (impede o truque de "DNS rebinding"). Domínios extras: HOSTS_PERMITIDOS=meu.dominio,outro.dominio
+const HOSTS_PERMITIDOS = new Set(String(process.env.HOSTS_PERMITIDOS || "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean));
+const semPorta = (h) => String(h || "").toLowerCase().replace(/^\[([^\]]+)\](:\d+)?$/, "$1").replace(/:\d+$/, "");
+const ehIp = (h) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(":");
+function motivoRecusa(req, rota) {
+  const hostCru = String(req.headers.host || "").toLowerCase();
+  const host = semPorta(hostCru);
+  if (!senhaLigada() && host && !(host === "localhost" || host.endsWith(".localhost") || ehIp(host) || HOSTS_PERMITIDOS.has(host))) {
+    return `endereco nao permitido (${host}); para usar por um dominio, defina SENHA ou HOSTS_PERMITIDOS`;
+  }
+  if (!rota.startsWith("/api/") && !rota.startsWith("/downloads/")) return null;
+  if (String(req.headers["sec-fetch-site"] || "").toLowerCase() === "cross-site") return "pedido vindo de outro site";
+  const origem = req.headers.origin;
+  if (origem && origem !== "null") {
+    let o; try { o = new URL(origem); } catch { return "origem invalida"; }
+    if (o.host.toLowerCase() !== hostCru) return "pedido vindo de outro site";
+  } else if (origem === "null" && req.method !== "GET" && req.method !== "HEAD") return "pedido de origem desconhecida";
+  return null;
+}
+
 // ---------- rotas ----------
 const servidor = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://localhost");
     const rota = url.pathname;
+    const recusa = motivoRecusa(req, rota);
+    if (recusa) {
+      console.warn(`recusado: ${req.method} ${rota} | ${recusa} | origem ${req.headers.origin || "-"} | host ${req.headers.host || "-"}`);
+      return json(res, 403, { ok: false, erro: recusa });
+    }
 
     if (rota === "/api/sessao" && req.method === "GET") {
       const logado = autenticado(req);
