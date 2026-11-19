@@ -186,7 +186,7 @@ export function lerVtt(conteudo) {
     const inicio = tempoVtt(linhas[i].split("-->")[0]);
     for (const bruta of linhas.slice(i + 1)) {
       // legenda automática do YouTube repete a linha anterior em cada cue e traz tags de tempo
-      const linha = bruta.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").trim();
+      const linha = bruta.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/\s*>>\s*/g, " ").trim(); // ">>" = troca de quem fala
       if (!linha || linha === ultima) continue;
       ultima = linha;
       pedacos.push({ inicio, texto: linha });
@@ -242,11 +242,11 @@ const PALAVRAS = {
   es: "el los las del pero muy porque también eso esto cuando hay usted ustedes estoy somos ya aquí cosa hacer nosotros ellos y lo".split(" "),
   en: "the and you that this is are with what have was for it not they we just like about there so of to".split(" "),
   fr: "le les des est une pas vous nous avec dans pour mais qui sur très avez".split(" "),
-  it: "il gli della sono non che per una questo anche molto perché come ci della".split(" "),
+  it: "il gli della sono non che per una questo anche molto perché ci della".split(" "),
   de: "der die das und ist nicht ich sie wir mit auch auf für eine sind aber".split(" "),
   nl: "het een van dat niet zijn wat hij maar ook als bij nog wel geen worden ik".split(" "),
-  pl: "nie jest się że na jak tak ale czy już tylko jestem było może bardzo".split(" "),
-  tr: "bir ve bu da de ne için çok ama gibi daha var olarak ben sen".split(" "),
+  pl: "nie jest się że jak tak ale czy już tylko jestem było może bardzo".split(" "),
+  tr: "bir ve bu için çok gibi daha var olarak ben sen değil şey".split(" "),
   id: "yang dan ini itu dengan tidak untuk ada saya kita akan dari bisa juga".split(" "),
 };
 export const NOMES_IDIOMA = {
@@ -337,7 +337,9 @@ function montarLotes(indices, blocos, limite) {
   return lotes;
 }
 
-async function traduzirBlocos(cfg, provedor, blocos, idioma, pasta, aoProgredir, { conferirTudo = true } = {}) {
+// tolerante: usado nos trechos "suspeitos" de um vídeo em português. A detecção trecho a trecho pode errar,
+// então devolver igual vale (o tradutor reconheceu português) e trecho que não sair não derruba o estudo.
+async function traduzirBlocos(cfg, provedor, blocos, idioma, pasta, aoProgredir, { conferirTudo = true, tolerante = false } = {}) {
   const saida = blocos.map((b) => ({ inicio: b.inicio, texto: b.texto }));
   const feito = new Array(blocos.length).fill(false);
   blocos.forEach((b, i) => { if (!normal(b.texto)) feito[i] = true; }); // trecho só com símbolos ("♪")
@@ -365,7 +367,7 @@ async function traduzirBlocos(cfg, provedor, blocos, idioma, pasta, aoProgredir,
     const porN = new Map((r && Array.isArray(r.trechos) ? r.trechos : []).map((t) => [Number(t.n), String(t.texto || "").trim()]));
     for (const i of lote) {
       const t = porN.get(i + 1);
-      if (provedor === "demo" ? !!t : traducaoAceita(blocos[i].texto, t)) { saida[i].texto = t; feito[i] = true; }
+      if (provedor === "demo" ? !!t : traducaoAceita(blocos[i].texto, t) || (tolerante && !!t && normal(t) === normal(blocos[i].texto))) { saida[i].texto = t; feito[i] = true; }
     }
   }
 
@@ -390,6 +392,7 @@ async function traduzirBlocos(cfg, provedor, blocos, idioma, pasta, aoProgredir,
     }));
   }
   const faltaram = feito.filter((x) => !x).length;
+  if (faltaram && tolerante) { console.warn(`traducao: ${faltaram} trecho(s) suspeito(s) ficaram como estavam (o vídeo é em português)`); return saida; }
   if (faltaram) throw new Error(`a traducao para o portugues ficou incompleta (${faltaram} de ${blocos.length} trechos); gere o estudo de novo`);
   // conferência final: o texto inteiro tem de ter cara de português
   if (conferirTudo && provedor !== "demo" && blocos.length >= 5 && detectarIdioma(saida, "pt") !== "pt") throw new Error("a traducao nao saiu em portugues; gere o estudo de novo");
@@ -1010,7 +1013,7 @@ export function criarEstudos(cfg) {
         const so = estrangeiros.map((i) => transcricao[i]);
         const traduzidos = await traduzirBlocos(cfg, provedor, so, "outro", pasta, (etapa, base, passo, previsto) => {
           atualizar("traduzindo", `Traduzindo ${estrangeiros.length} trecho(s) em outro idioma`, { faixa: [inicioAnalise, fimTraducao], base, passo, previsto: provedor === "demo" ? 2 : previsto, estimado: true });
-        }, { conferirTudo: false });
+        }, { conferirTudo: false, tolerante: true });
         transcricaoOriginal = transcricao;
         transcricao = transcricao.map((b) => ({ ...b }));
         estrangeiros.forEach((i, k) => { transcricao[i].texto = traduzidos[k].texto; });
