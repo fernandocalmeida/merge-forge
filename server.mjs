@@ -5,7 +5,7 @@ import { readdir, stat, unlink, writeFile, rename, mkdir, readFile } from "node:
 import { createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { calcularProgresso, criarEstudos, motivoSemApostila, statusClaude, testarTokenClaude, testarChaveApi, testarChaveGroq, chavesGroq, criarInfograficos, chaveImagem, codexConectado, codexStatus, iniciarLoginCodex, sairCodex, verificarCodex, testarChaveGemini, testarChaveOpenAI } from "./ia.mjs";
+import { calcularProgresso, criarEstudos, motivoSemApostila, statusClaude, testarTokenClaude, testarChaveApi, testarChaveGroq, chavesGroq, criarInfograficos, chaveImagem, codexConectado, codexStatus, iniciarLoginCodex, sairCodex, verificarCodex, testarChaveGemini, testarChaveOpenAI, testarClaudeAgora, testarGroqAgora, testarCodexAgora, conferirParaEstudo, conferirParaInfografico, esquecerSaude, saudeAtual } from "./ia.mjs";
 import { criarConfig } from "./config.mjs";
 import { itensExportaveis, enviarZip, disposicao, nomeSeguro, tamanhoAproximado, legendasSrt } from "./exportar.mjs";
 import { gerarApostila } from "./apostila.mjs";
@@ -592,6 +592,9 @@ const TIPOS = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".webmanifest": "application/manifest+json",
+  ".pdf": "application/pdf",
+  ".srt": "application/x-subrip; charset=utf-8",
+  ".zip": "application/zip",
   ".mp4": "video/mp4",
   ".mov": "video/quicktime",
   ".webm": "video/webm",
@@ -660,15 +663,17 @@ function ehLocal(req) {
 const podeConfigurar = (req) => senhaLigada() || ehLocal(req);
 
 // Abre uma janela do terminal com `claude auth login` (Windows, macOS ou Linux com interface gráfica).
-function abrirTerminalLogin() {
+// sub: "auth login" (entrar) ou "setup-token" (gerar uma chave nova do Claude Code para colar no app)
+function abrirTerminalLogin(sub = "auth login") {
   const opcoes = { detached: true, stdio: "ignore" };
+  const fim = sub === "setup-token" ? "Copie a chave que apareceu acima e cole no Merge Forge." : "Pronto. Pode fechar esta janela e voltar ao Merge Forge.";
   let p;
   if (process.platform === "win32") {
-    p = spawn("cmd.exe", ["/c", "start", "\"Conectar Claude\"", "cmd.exe", "/k", `"${CLAUDE_BIN} auth login & echo. & echo Pronto. Pode fechar esta janela e voltar ao Merge Forge."`], { ...opcoes, windowsVerbatimArguments: true });
+    p = spawn("cmd.exe", ["/c", "start", "\"Conectar Claude\"", "cmd.exe", "/k", `"${CLAUDE_BIN} ${sub} & echo. & echo ${fim}"`], { ...opcoes, windowsVerbatimArguments: true });
   } else if (process.platform === "darwin") {
-    p = spawn("osascript", ["-e", `tell application "Terminal" to do script "${CLAUDE_BIN} auth login"`, "-e", 'tell application "Terminal" to activate'], opcoes);
+    p = spawn("osascript", ["-e", `tell application "Terminal" to do script "${CLAUDE_BIN} ${sub}"`, "-e", 'tell application "Terminal" to activate'], opcoes);
   } else {
-    p = spawn("x-terminal-emulator", ["-e", `${CLAUDE_BIN} auth login`], opcoes);
+    p = spawn("x-terminal-emulator", ["-e", `${CLAUDE_BIN} ${sub}`], opcoes);
   }
   p.on("error", () => {});
   p.unref();
@@ -912,7 +917,7 @@ const servidor = http.createServer(async (req, res) => {
       const job = infograficos.estado(nome);
       const q = estudo && estudo.poster ? estudo.poster : null;
       const estado = job ? job.estado : q && q.pronto ? "pronto" : q ? "parcial" : "nenhum";
-      return json(res, 200, { ok: true, estado, etapa: job ? job.etapa : null, erro: job ? job.erro : null, progresso: calcularProgresso(job), estimado: !!(job && job.estimado), poster: q, imagemConectada: !!chaveImagem(), temEstudo: !!estudo });
+      return json(res, 200, { ok: true, estado, etapa: job ? job.etapa : null, erro: job ? job.erro : null, conta: job ? job.conta || null : null, progresso: calcularProgresso(job), estimado: !!(job && job.estimado), poster: q, imagemConectada: !!chaveImagem(), temEstudo: !!estudo });
     }
 
     if (rota === "/api/poster" && req.method === "POST") {
@@ -921,8 +926,14 @@ const servidor = http.createServer(async (req, res) => {
       if (!caminho || !existsSync(caminho)) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
       const estudo = await lerJson(arquivoEstudo(nome));
       if (!estudo) return json(res, 409, { ok: false, erro: "gere o estudo do video primeiro" });
-      if (!chaveImagem()) return json(res, 503, { ok: false, erro: "o desenho do infografico nao esta disponivel: entre no Codex com a conta do ChatGPT no servidor ou conecte a chave da OpenAI" });
-      if (!estudos.configurado()) return json(res, 503, { ok: false, erro: "a IA ainda nao foi conectada" });
+      if (!chaveImagem()) return json(res, 409, { ok: false, conta: "codex", erro: "entre com a conta do ChatGPT para desenhar o infográfico" });
+      if (!estudos.configurado()) return json(res, 409, { ok: false, conta: "claude", erro: "conecte a conta Claude" });
+      if (!infograficos.estado(nome) || infograficos.estado(nome).estado === "erro") {
+        const preC = await conferirParaEstudo({ claude: CLAUDE_BIN });
+        if (!preC.ok && preC.conta === "claude") return json(res, 409, { ok: false, conta: "claude", erro: preC.erro });
+        const preI = await conferirParaInfografico();
+        if (!preI.ok) return json(res, 409, { ok: false, conta: preI.conta, erro: preI.erro });
+      }
       if (refazer && estudo.poster) {
         for (let i = 1; i <= 8; i++) for (const x of [".jpg", ".png"]) await unlink(`${prefixoQuadro(nome)}${i}${x}`).catch(() => {});
         delete estudo.poster;
@@ -1048,6 +1059,9 @@ const servidor = http.createServer(async (req, res) => {
         openai: !!process.env.OPENAI_API_KEY,
         codex: codexConectado(),
         codexInfo: codexStatus(),
+        claudeSemSistema: process.env.CLAUDE_SEM_SISTEMA === "1",
+        codexSemSistema: process.env.CODEX_SEM_SISTEMA === "1",
+        saude: saudeAtual(),
         local: ehLocal(req),
         podeConfigurar: podeConfigurar(req),
       });
@@ -1058,11 +1072,50 @@ const servidor = http.createServer(async (req, res) => {
       if (!podeConfigurar(req)) return json(res, 403, { ok: false, erro: "para conectar contas pela rede, defina uma SENHA no app" });
       const corpo = await lerCorpo(req);
 
-      if (rota === "/api/ia/abrir-login") {
-        // abre uma janela de terminal NESTE computador com o login do Claude Code
-        if (!ehLocal(req)) return json(res, 400, { ok: false, erro: "o login pelo terminal só funciona no computador onde o app está instalado" });
-        try { abrirTerminalLogin(); return json(res, 200, { ok: true }); }
-        catch (e) { return json(res, 500, { ok: false, erro: String(e.message || e) }); }
+      if (rota === "/api/ia/abrir-login" || rota === "/api/ia/abrir-setup-token") {
+        // abre uma janela de terminal NESTE computador: login do Claude Code, ou geração de uma chave nova (setup-token)
+        if (!ehLocal(req)) return json(res, 400, { ok: false, erro: "o terminal só abre no computador onde o app está instalado; use a opção de colar a chave" });
+        try {
+          if (rota === "/api/ia/abrir-login") { await config.gravar({ CLAUDE_SEM_SISTEMA: null }); esquecerSaude("claude"); }
+          abrirTerminalLogin(rota === "/api/ia/abrir-login" ? "auth login" : "setup-token");
+          return json(res, 200, { ok: true });
+        } catch (e) { return json(res, 500, { ok: false, erro: String(e.message || e) }); }
+      }
+
+      // teste REAL das contas (pede um "OK" à IA, confere as chaves da Groq, faz o Codex responder)
+      if (rota === "/api/ia/testar") {
+        const quais = corpo.conta ? [corpo.conta] : ["claude", "groq", "codex"];
+        const r = {};
+        await Promise.all(quais.map(async (q) => {
+          if (q === "claude") r.claude = await testarClaudeAgora({ claude: CLAUDE_BIN });
+          else if (q === "groq") r.groq = await testarGroqAgora();
+          else if (q === "codex") r.codex = await testarCodexAgora();
+        }));
+        return json(res, 200, { ok: true, ...r });
+      }
+
+      // desconectar a conta Claude: token do app sai do .env; o login do Claude Code deste computador é
+      // encerrado (claude auth logout) quando o pedido vem do próprio computador; pela rede o app só deixa de usá-lo
+      if (rota === "/api/ia/claude/sair") {
+        // desconecta SÓ o que o app está usando agora: com token, sai o token (o login do computador fica como está)
+        const feito = [];
+        const st = process.env.CLAUDE_CODE_OAUTH_TOKEN ? null : await statusClaude({ claude: CLAUDE_BIN });
+        if (process.env.CLAUDE_CODE_OAUTH_TOKEN) { await config.gravar({ CLAUDE_CODE_OAUTH_TOKEN: null }); feito.push("token"); }
+        else if (st.logado && process.env.CLAUDE_SEM_SISTEMA !== "1") {
+          if (ehLocal(req)) {
+            await new Promise((ok) => { const p = spawn(CLAUDE_BIN, ["auth", "logout"], { windowsHide: true, stdio: "ignore", shell: process.platform === "win32" }); p.on("close", ok); p.on("error", ok); });
+            feito.push("logout");
+          } else { await config.gravar({ CLAUDE_SEM_SISTEMA: "1" }); feito.push("ignorar"); }
+        }
+        esquecerSaude("claude");
+        await estudos.redetectar();
+        return json(res, 200, { ok: true, feito, provedor: estudos.provedor() });
+      }
+      if (rota === "/api/ia/claude/usar-sistema") {
+        await config.gravar({ CLAUDE_SEM_SISTEMA: null });
+        esquecerSaude("claude");
+        await estudos.redetectar();
+        return json(res, 200, { ok: true, provedor: estudos.provedor() });
       }
 
       if (rota === "/api/ia/conectar") {
@@ -1076,9 +1129,11 @@ const servidor = http.createServer(async (req, res) => {
           else if (tipo === "gemini") { await testarChaveGemini(valor); await config.gravar({ GEMINI_API_KEY: valor }); }
           else if (tipo === "openai") { await testarChaveOpenAI(valor); await config.gravar({ OPENAI_API_KEY: valor }); }
           else return json(res, 400, { ok: false, erro: "tipo desconhecido" });
+          if (tipo === "claude-token") await config.gravar({ CLAUDE_SEM_SISTEMA: null });
         } catch (e) {
           return json(res, 400, { ok: false, erro: String(e.message || e).slice(0, 240) });
         }
+        esquecerSaude();
         await estudos.redetectar();
         return json(res, 200, { ok: true, provedor: estudos.provedor() });
       }
@@ -1087,20 +1142,32 @@ const servidor = http.createServer(async (req, res) => {
         const chave = { "claude-token": "CLAUDE_CODE_OAUTH_TOKEN", api: "ANTHROPIC_API_KEY", groq: "GROQ_API_KEY", gemini: "GEMINI_API_KEY", openai: "OPENAI_API_KEY" }[corpo.tipo];
         if (!chave) return json(res, 400, { ok: false, erro: "tipo desconhecido" });
         await config.gravar(corpo.tipo === "groq" ? { GROQ_API_KEY: null, GROQ_API_KEYS: null } : { [chave]: null });
+        esquecerSaude();
         await estudos.redetectar();
         return json(res, 200, { ok: true, provedor: estudos.provedor() });
       }
 
       // ---------- login do Codex (conta do ChatGPT) por código ----------
       if (rota === "/api/ia/codex/entrar") {
+        esquecerSaude("codex");
         try { return json(res, 200, { ok: true, ...(await iniciarLoginCodex()) }); }
         catch (e) { return json(res, 500, { ok: false, erro: String(e.message || e).slice(0, 240) }); }
       }
       if (rota === "/api/ia/codex/estado") {
         return json(res, 200, { ok: true, ...codexStatus() });
       }
+      // sair: a conta entrada pelo app é desconectada; o Codex do computador/servidor não é tocado, o app só deixa de usá-lo
       if (rota === "/api/ia/codex/sair") {
-        await sairCodex();
+        const origem = codexStatus().origem;
+        if (origem === "app") await sairCodex();
+        else if (origem === "servidor") { await config.gravar({ CODEX_SEM_SISTEMA: "1" }); await verificarCodex(); }
+        esquecerSaude("codex");
+        return json(res, 200, { ok: true, ...codexStatus() });
+      }
+      if (rota === "/api/ia/codex/usar-sistema") {
+        await config.gravar({ CODEX_SEM_SISTEMA: null });
+        await verificarCodex();
+        esquecerSaude("codex");
         return json(res, 200, { ok: true, ...codexStatus() });
       }
 
@@ -1171,7 +1238,13 @@ const servidor = http.createServer(async (req, res) => {
       const { nome, refazer } = await lerCorpo(req);
       const caminho = arquivoDoNome(nome || "");
       if (!caminho || !existsSync(caminho)) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
-      if (!estudos.configurado()) return json(res, 503, { ok: false, erro: "a IA ainda nao foi conectada no servidor (veja IA_PROVEDOR no README)" });
+      if (!estudos.configurado()) return json(res, 409, { ok: false, conta: "claude", erro: "conecte a conta Claude para gerar o estudo" });
+      if (!refazer && await lerJson(arquivoEstudo(nome))) return json(res, 200, { ok: true, estado: "pronto" });
+      // antes de começar: as contas funcionam de verdade? (login expirado, chave apagada...)
+      if (!estudos.emAndamento(nome)) {
+        const pre = await conferirParaEstudo({ claude: CLAUDE_BIN });
+        if (!pre.ok) return json(res, 409, { ok: false, conta: pre.conta, erro: pre.erro });
+      }
       if (refazer) { await unlink(arquivoEstudo(nome)).catch(() => {}); if (!legendagem.emAndamento(nome)) { await unlink(arquivoLegendado(nome)).catch(() => {}); await unlink(fichaLegendado(arquivoLegendado(nome))).catch(() => {}); } }
       else if (await lerJson(arquivoEstudo(nome))) return json(res, 200, { ok: true, estado: "pronto" });
       const meta = (await lerJson(arquivoMeta(nome))) || {};

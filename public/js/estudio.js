@@ -1,6 +1,6 @@
 // Estúdio IA: escolhe um vídeo, gera o estudo e mostra em 7 visões interativas.
 import { $, $$, el, icone, api, aviso, duracao, linkArquivo, irPara, barraProgresso } from "./app.js";
-import { abrirConexoes, aoMudarConexao } from "./conexoes.js";
+import { abrirConexoes, aoMudarConexao, abrirReconectar } from "./conexoes.js";
 import { montarPoster } from "./poster.js";
 import { abrirExportar, entregarArquivo } from "./exportar.js";
 import { chipRede, redeDoNome } from "./redes.js";
@@ -33,6 +33,12 @@ let iaInfo = null;
 const nomeDe = (it) => it.titulo || it.nome.replace(/^\d{8}_[a-z]+_/, "").replace(/_[A-Za-z0-9_-]{6,}_(1080p|720p|480p|audio)\.[a-z0-9]+$/i, "").replace(/\.[a-z0-9]+$/i, "");
 
 let gerarAoAbrir = false;
+// conta com problema (login expirado, chave apagada): abre a reconexão ali mesmo e, quando voltar, gera de novo
+const ANDAMENTO = ["na-fila", "transcrevendo", "traduzindo", "analisando"];
+let estadoAnterior = {};
+function reconectarConta(it, conta, motivo, refazer = false) {
+  abrirReconectar(conta, { motivo, rotulo: "Gerar estudo com IA", aoConectar: () => gerar(it, refazer) });
+}
 // abre o estudo de um vídeo direto numa visão; se ainda não existir, já começa a gerar
 export function abrirEstudo(nome, qualVisao = "resumo", gerar = false) {
   atual = nome;
@@ -101,13 +107,13 @@ function escolher() {
   ].filter(Boolean));
 }
 
-function avisoIa() {
+function avisoIa(it) {
   return el("div", { class: "cartao aviso-ia" }, [
     icone("plugs"),
     el("div", {}, [
       el("strong", { texto: "Conecte sua conta Claude para usar o Estúdio" }),
       el("p", { texto: "Leva um minuto: você entra com a sua conta e o app passa a gerar os estudos na sua assinatura." }),
-      el("button", { class: "btn btn--primario", style: "margin-top:12px", onclick: abrirConexoes }, [icone("plugs-connected"), "Conectar agora"]),
+      el("button", { class: "btn btn--primario", style: "margin-top:12px", onclick: () => (it ? reconectarConta(it, "claude", "conecte a conta Claude para gerar o estudo") : abrirConexoes()) }, [icone("plugs-connected"), "Conectar agora"]),
     ]),
   ]);
 }
@@ -134,6 +140,9 @@ async function carregar(it) {
     abrirConexoes();
   }
   gerarAoAbrir = false;
+  // o estudo acabou de falhar por causa de uma conta enquanto a pessoa olhava: abre a reconexão na hora
+  if (d.estado === "erro" && d.conta && ANDAMENTO.includes(estadoAnterior[it.nome])) reconectarConta(it, d.conta, d.erro);
+  estadoAnterior[it.nome] = d.estado;
   desenhar(it, d);
   if (["na-fila", "transcrevendo", "traduzindo", "analisando"].includes(d.estado)) sondagem = setTimeout(() => carregar(it), 2500);
 }
@@ -309,7 +318,8 @@ function convite(it, d) {
       icone(v.icone, true), el("span", { texto: v.nome }), el("small", { texto: v.id === "infografico" ? "à parte, quando quiser" : "incluído" }),
     ]))),
     d.estado === "erro" ? el("p", { class: "est-erro", role: "alert" }, [icone("warning-circle", true), el("span", { texto: "Da última vez deu erro: " + d.erro })]) : null,
-    configurada ? btn : avisoIa(),
+    d.estado === "erro" && d.conta ? el("button", { class: "btn btn--secundario", onclick: () => reconectarConta(it, d.conta, d.erro) }, [icone("plugs-connected"), "Reconectar a conta e gerar de novo"]) : null,
+    configurada ? btn : avisoIa(it),
     el("p", { class: "est-nota", texto: "Vídeos curtos ficam prontos em menos de um minuto. Vídeos longos podem levar alguns minutos." }),
   ]);
 }
@@ -319,6 +329,11 @@ async function gerar(it, refazer, btn) {
   try {
     const r = await api("/api/estudo", { method: "POST", body: JSON.stringify({ nome: it.nome, refazer }) });
     const d = await r.json();
+    if (!d.ok && d.conta) {
+      // conferência antes de gerar achou conta com problema: reconecta aqui mesmo
+      if (btn) { btn.dataset.estado = ""; btn.disabled = false; }
+      return reconectarConta(it, d.conta, d.erro, refazer);
+    }
     if (!d.ok) throw new Error(d.erro || "não deu para começar");
     estudo = null;
     ctx.recarregar();

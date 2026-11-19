@@ -1,7 +1,7 @@
 // Infográfico do vídeo: um pôster único desenhado pelo gerador de imagens da OpenAI
 // (roteiro de arte escrito pelo Claude). Na tela: pôster com zoom, arrastar, tela cheia e download.
 import { el, icone, api, aviso, barraProgresso } from "./app.js";
-import { abrirConexoes } from "./conexoes.js";
+import { abrirConexoes, abrirReconectar } from "./conexoes.js";
 
 const urlImagem = (nome, versao) => `/api/quadro?nome=${encodeURIComponent(nome)}&n=1&v=${encodeURIComponent(versao || "")}`;
 const EM_ANDAMENTO = ["na-fila", "roteiro", "desenhando"];
@@ -12,6 +12,9 @@ export function montarPoster(nome) {
   let timer = null;
   let ultima = "";
   let inicio = 0;
+  let estadoAntes = null;
+  // conta com problema: reconecta ali mesmo e, quando voltar, cria o infográfico de novo
+  const reconectar = (conta, motivo, refazer) => abrirReconectar(conta, { motivo, rotulo: "Criar o infográfico", aoConectar: () => gerar(refazer) });
 
   async function atualizar() {
     clearTimeout(timer);
@@ -20,6 +23,9 @@ export function montarPoster(nome) {
     let d;
     try { d = await (await api("/api/poster?nome=" + encodeURIComponent(nome))).json(); }
     catch (e) { caixa.replaceChildren(el("p", { class: "est-nota", texto: "Não deu para carregar o infográfico: " + e.message })); return; }
+    // falhou agora por causa de uma conta: abre a reconexão na hora
+    if (d.estado === "erro" && d.conta && EM_ANDAMENTO.includes(estadoAntes)) reconectar(d.conta, d.erro, false);
+    estadoAntes = d.estado;
     const chave = JSON.stringify([d.estado, d.etapa, d.erro, d.progresso, d.poster && d.poster.geradoEm, d.imagemConectada]);
     if (chave !== ultima) { ultima = chave; desenhar(d); }
     if (EM_ANDAMENTO.includes(d.estado)) timer = setTimeout(atualizar, 3000);
@@ -29,6 +35,10 @@ export function montarPoster(nome) {
     if (btn) { btn.dataset.estado = "carregando"; btn.disabled = true; }
     try {
       const d = await (await api("/api/poster", { method: "POST", body: JSON.stringify({ nome, refazer }) })).json();
+      if (!d.ok && d.conta) {
+        if (btn) { btn.dataset.estado = ""; btn.disabled = false; }
+        return reconectar(d.conta, d.erro, refazer);
+      }
       if (!d.ok) throw new Error(d.erro || "não deu para começar");
       inicio = Date.now();
       ultima = "";
@@ -70,9 +80,10 @@ export function montarPoster(nome) {
         el("h3", { texto: "O vídeo inteiro em um pôster" }),
         el("p", { texto: "Um infográfico ilustrado de alto detalhe, com etapas, peças em 3D explodido com rótulos, painéis de dados e resumo final, todo em português. O Claude escreve o roteiro e o gerador de imagens do ChatGPT desenha." }),
         d.estado === "erro" ? el("p", { class: "est-erro" }, [icone("warning-circle", true), el("span", { texto: "Da última vez deu erro: " + (d.erro || "") })]) : null,
+        d.estado === "erro" && d.conta ? el("button", { class: "btn btn--secundario", onclick: () => reconectar(d.conta, d.erro, false) }, [icone("plugs-connected"), "Reconectar a conta e criar de novo"]) : null,
         d.imagemConectada ? btn : el("div", { class: "ip-sem-chave" }, [
-          el("p", { texto: "O desenho usa o Codex logado na conta do ChatGPT no servidor (ou uma chave da OpenAI)." }),
-          el("button", { class: "btn btn--primario", onclick: abrirConexoes }, [icone("plugs-connected"), "Ver conexões"]),
+          el("p", { texto: "O desenho usa a sua conta do ChatGPT (Codex) ou uma chave da OpenAI." }),
+          el("button", { class: "btn btn--primario", onclick: () => reconectar("codex", "entre com a conta do ChatGPT para desenhar o infográfico", false) }, [icone("plugs-connected"), "Conectar agora"]),
         ]),
       ]));
       return;

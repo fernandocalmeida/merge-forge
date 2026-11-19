@@ -3,6 +3,11 @@
 import { $, el, icone, api, aviso, abrirFolha, fecharFolha, verTermo } from "./app.js";
 
 let estado = null;
+// a folha aberta é desta tela? (o teste das contas termina depois e só redesenha se ela ainda estiver aberta)
+const folhaNossa = () => $("#folha-fundo").dataset.aberta === "1" && !!document.querySelector("#folha-corpo [data-conexoes]");
+function abrir(conteudo, opcoes = {}) {
+  abrirFolha([el("span", { hidden: true, "data-conexoes": "1" }), ...[].concat(conteudo)], opcoes);
+}
 let sondagem = null;
 const ouvintes = new Set();
 export const aoMudarConexao = (fn) => ouvintes.add(fn);
@@ -47,7 +52,8 @@ function campoSegredo(rotulo, tipo, placeholder, depois) {
       btn.dataset.estado = "ok"; $(".rotulo", btn).textContent = "Conectado";
       aviso("Conectado.");
       await lerEstado();
-      setTimeout(() => (depois ? depois() : desenhar()), 900);
+      const conta = { "claude-token": "claude", api: "claude", groq: "groq", openai: "codex" }[tipo];
+      setTimeout(() => (depois ? depois() : conta ? testarContas(conta) : desenhar()), 600);
     } catch (e) {
       btn.dataset.estado = ""; btn.disabled = false; $(".rotulo", btn).textContent = "Conectar";
       erro.textContent = String(e.message || e).replace(/^./, (c) => c.toUpperCase());
@@ -69,15 +75,49 @@ function selo(ok, textoOk, textoNao) {
   return el("span", { class: "selo-con" + (ok ? " selo-con--ok" : "") }, [icone(ok ? "check-circle" : "circle-dashed", ok), ok ? textoOk : textoNao]);
 }
 
+// Resultado do teste REAL da conta (o servidor pede um "OK" à IA): funcionando, com problema ou conferindo
+let testando = false;
+function seloSaude(conta, conectado, textoNao = "Não conectada") {
+  const x = estado && estado.saude ? estado.saude[conta] : null;
+  if (!conectado) return selo(false, "", textoNao);
+  if (testando && (!x || x.ok !== false)) return el("span", { class: "selo-con selo-con--testando" }, [icone("circle-notch"), "Conferindo..."]);
+  if (!x || x.ok === null) return selo(true, "Conectada", textoNao);
+  if (x.ok) return el("span", { class: "selo-con selo-con--ok" }, [icone("check-circle", true), "Funcionando"]);
+  return el("span", { class: "selo-con selo-con--erro" }, [icone("warning-circle", true), "Com problema"]);
+}
+function avisoSaude(conta) {
+  const x = estado && estado.saude ? estado.saude[conta] : null;
+  if (!x || x.ok !== false || !x.erro) return null;
+  return el("p", { class: "con-problema", role: "alert" }, [icone("warning-circle", true), el("span", { texto: x.erro.charAt(0).toUpperCase() + x.erro.slice(1) + ". Entre de novo ou conecte outra conta abaixo." })]);
+}
+const quando = (ms) => { const s = Math.round((Date.now() - ms) / 1000); return s < 60 ? "agora" : s < 3600 ? `há ${Math.round(s / 60)} min` : `há ${Math.round(s / 3600)} h`; };
+
+// testa as contas de verdade e redesenha; "conta" testa só uma
+export async function testarContas(conta = null) {
+  testando = true; if (folhaNossa()) desenhar();
+  try { await api("/api/ia/testar", { method: "POST", body: JSON.stringify(conta ? { conta } : {}) }); } catch { /* mostra o que tiver */ }
+  testando = false;
+  await lerEstado();
+  if (folhaNossa()) desenhar();
+  return estado && estado.saude ? (conta ? estado.saude[conta] : estado.saude) : null;
+}
+
+async function postar(caminho, corpo = {}) {
+  const d = await (await api(caminho, { method: "POST", body: JSON.stringify(corpo) })).json();
+  if (!d.ok) throw new Error(d.erro || "não deu");
+  return d;
+}
+
 // ---------- seção: conta Claude ----------
 function secaoClaude(s) {
   const c = s.claude || {};
-  const conectado = c.logado || s.tokenClaude;
+  const viaLogin = c.logado && !s.claudeSemSistema;
+  const conectado = viaLogin || s.tokenClaude;
   const filhos = [
     el("div", { class: "con-cabeca" }, [
       el("span", { class: "con-icone" }, [icone("sparkle", true)]),
       el("div", {}, [el("h3", { texto: "Conta Claude" }), el("p", { texto: "Gera resumo, mapa mental e o resto usando a sua assinatura Claude." })]),
-      selo(conectado, "Conectada", "Não conectada"),
+      seloSaude("claude", conectado),
     ]),
   ];
 
@@ -90,30 +130,61 @@ function secaoClaude(s) {
     return el("section", { class: "con-secao" }, filhos);
   }
 
+  const problema = avisoSaude("claude");
+  if (problema) filhos.push(problema);
+  const x = s.saude && s.saude.claude;
   if (conectado) {
-    filhos.push(el("p", { class: "con-texto", texto: s.tokenClaude ? "Conectada por token. Para usar outra conta, desconecte e conecte de novo." : "Conectada pelo login do Claude Code deste computador." }));
-    if (s.tokenClaude) filhos.push(el("button", { class: "btn btn--fantasma", onclick: () => desconectar("claude-token") }, [icone("plug"), "Desconectar token"]));
-    return el("section", { class: "con-secao" }, filhos);
+    filhos.push(el("p", { class: "con-texto", texto: (s.tokenClaude ? "Conectada por chave (token) do Claude Code." : "Conectada pelo login do Claude Code deste computador.") + (x && x.ok ? ` Conferida ${quando(x.em)}.` : "") }));
+  } else if (s.claudeSemSistema && c.logado) {
+    filhos.push(el("p", { class: "con-texto", texto: "Desconectada: o app não usa mais o login do Claude Code deste computador." }),
+      el("button", { class: "btn btn--secundario", onclick: () => acao(() => postar("/api/ia/claude/usar-sistema"), "Login do computador em uso de novo.", "claude") }, [icone("arrow-counter-clockwise"), "Usar de novo o login do computador"]));
   }
 
+  // ações sempre à mão: testar, entrar de novo, gerar chave nova, desconectar
+  const botoes = el("div", { class: "con-acoes" });
+  if (conectado) botoes.append(el("button", { class: "btn btn--secundario", onclick: () => testarContas("claude") }, [icone("pulse"), "Testar agora"]));
   if (s.local) {
-    const entrar = el("button", { class: "btn btn--primario btn--grande btn--bloco" }, [el("span", { class: "rotulo" }, [icone("sign-in"), "Entrar com a conta Claude"])]);
+    const entrar = el("button", { class: "btn " + (conectado && !problema ? "btn--secundario" : "btn--primario") }, [el("span", { class: "rotulo" }, [icone("sign-in"), conectado ? "Entrar de novo" : "Entrar com a conta Claude"])]);
     entrar.addEventListener("click", () => loginNoTerminal(entrar));
-    filhos.push(
-      el("p", { class: "con-texto", texto: "Vai abrir uma janela do terminal com o login do Claude. Entre na sua conta pelo navegador e volte para cá: a conexão aparece sozinha." }),
-      entrar,
-    );
+    botoes.append(entrar);
   }
-  filhos.push(el("details", { class: "con-alternativa", open: !s.local }, [
-    el("summary", { texto: s.local ? "Prefere colar um token?" : "Conectar com um token" }),
+  if (conectado) botoes.append(el("button", { class: "btn btn--fantasma", onclick: () => desconectarClaude(s) }, [icone("plug"), "Desconectar"]));
+  filhos.push(botoes);
+
+  // chave nova (token) do Claude Code: vale 1 ano e funciona também com o app num servidor
+  const abrirToken = s.local ? el("button", { class: "btn btn--secundario btn--bloco", onclick: () => abrirSetupToken() }, [icone("key"), "Gerar chave nova no terminal"]) : null;
+  filhos.push(el("details", { class: "con-alternativa", open: !s.local && (!conectado || !!problema) }, [
+    el("summary", { texto: s.tokenClaude ? "Trocar a chave (token) do Claude" : "Gerar uma chave nova (token) do Claude Code e colar aqui" }),
     el("ol", { class: "con-passos" }, [
-      el("li", {}, ["Num computador com o Claude Code, rode:", copiavel("claude setup-token")]),
+      el("li", {}, s.local ? ["Toque abaixo: abre um terminal com ", el("code", { class: "mono", texto: "claude setup-token" }), "."] : ["Num computador com o Claude Code, rode:", copiavel("claude setup-token")]),
       el("li", { texto: "Entre na sua conta Claude no navegador que abrir." }),
-      el("li", { texto: "Copie o token que aparece no terminal e cole aqui:" }),
+      el("li", { texto: "Copie a chave que aparece no terminal e cole aqui. O app testa antes de salvar." }),
     ]),
-    campoSegredo("Token do Claude", "claude-token", "Cole o token aqui"),
-  ]));
+    abrirToken,
+    campoSegredo("Token do Claude", "claude-token", "Cole a chave (token) aqui"),
+  ].filter(Boolean)));
   return el("section", { class: "con-secao" }, filhos);
+}
+
+async function acao(fn, okTexto, conta) {
+  try { await fn(); if (okTexto) aviso(okTexto, "check-circle"); }
+  catch (e) { aviso("Não deu: " + e.message, "warning"); }
+  await lerEstado();
+  if (conta) return testarContas(conta);
+  desenhar();
+}
+
+async function desconectarClaude(s) {
+  const msg = s.tokenClaude
+    ? "Desconectar a chave (token) do Claude deste app?"
+    : s.local ? "Desconectar a conta Claude? Isso sai do login do Claude Code neste computador (claude auth logout). Depois é só tocar em Entrar com a conta Claude." : "Desconectar a conta Claude deste app? O login do servidor não é apagado; o app só deixa de usá-lo.";
+  if (!confirm(msg)) return;
+  await acao(() => postar("/api/ia/claude/sair"), "Conta Claude desconectada.", "claude");
+}
+
+async function abrirSetupToken() {
+  try { await postar("/api/ia/abrir-setup-token"); aviso("Terminal aberto: entre na conta e copie a chave que aparecer.", "key"); }
+  catch (e) { aviso("Não abriu o terminal: " + e.message, "warning"); }
 }
 
 async function loginNoTerminal(btn) {
@@ -136,9 +207,9 @@ async function loginNoTerminal(btn) {
       const d = await (await api("/api/ia/verificar", { method: "POST", body: "{}" })).json();
       if (d.claude && d.claude.logado) {
         clearInterval(sondagem);
-        aviso("Conta Claude conectada.");
+        aviso("Login feito. Conferindo a conta...");
         await lerEstado();
-        desenhar();
+        await testarContas("claude");
       }
     } catch { /* tenta de novo */ }
   }, 3000);
@@ -147,24 +218,33 @@ async function loginNoTerminal(btn) {
 async function verificar() {
   try { await api("/api/ia/verificar", { method: "POST", body: "{}" }); } catch { /* segue */ }
   await lerEstado();
-  desenhar();
+  await testarContas();
 }
 
 // ---------- seção: Groq ----------
 function secaoGroq(s) {
+  const x = s.saude && s.saude.groq;
+  const texto = x && x.ok && x.total > 1 ? `${x.validas} de ${x.total} chaves funcionando, em revezamento.` : x && x.ok ? `Chave funcionando. Conferida ${quando(x.em)}.` : "";
   return el("section", { class: "con-secao" }, [
     el("div", { class: "con-cabeca" }, [
       el("span", { class: "con-icone" }, [icone("waveform", true)]),
       el("div", {}, [el("h3", { texto: "Transcrição do áudio (Groq)" }), el("p", { texto: "Para vídeos sem legenda, como a maioria do Instagram e do TikTok." })]),
-      selo(s.groq, s.groqChaves > 1 ? `Conectada (${s.groqChaves} chaves em revezamento)` : "Conectada", "Opcional"),
+      seloSaude("groq", s.groq, "Opcional"),
     ]),
+    avisoSaude("groq"),
+    s.groq && texto ? el("p", { class: "con-texto", texto }) : null,
     s.groq
-      ? el("button", { class: "btn btn--fantasma", onclick: () => desconectar("groq") }, [icone("plug"), "Desconectar Groq"])
-      : el("div", {}, [
-        el("p", { class: "con-texto" }, ["Crie uma chave grátis em ", el("a", { href: "https://console.groq.com/keys", target: "_blank", rel: "noopener", texto: "console.groq.com/keys" }), " e cole aqui:"]),
-        campoSegredo("Chave da Groq", "groq", "Cole a chave da Groq"),
-      ]),
-  ]);
+      ? el("div", { class: "con-acoes" }, [
+        el("button", { class: "btn btn--secundario", onclick: () => testarContas("groq") }, [icone("pulse"), "Testar agora"]),
+        el("button", { class: "btn btn--fantasma", onclick: () => { if (confirm("Desconectar a chave da Groq?")) desconectar("groq"); } }, [icone("plug"), "Desconectar"]),
+      ])
+      : null,
+    el("details", { class: "con-alternativa", open: !s.groq || (x && x.ok === false) }, [
+      el("summary", { texto: s.groq ? "Trocar por uma chave nova da Groq" : "Conectar a chave da Groq" }),
+      el("p", { class: "con-texto" }, ["Crie uma chave grátis em ", el("a", { href: "https://console.groq.com/keys", target: "_blank", rel: "noopener", texto: "console.groq.com/keys" }), " e cole aqui (o app testa antes de salvar):"]),
+      campoSegredo("Chave da Groq", "groq", "Cole a chave da Groq"),
+    ]),
+  ].filter(Boolean));
 }
 
 // ---------- seção: Codex / ChatGPT (desenha o infográfico) ----------
@@ -174,27 +254,31 @@ function secaoImagem(s) {
     el("div", { class: "con-cabeca" }, [
       el("span", { class: "con-icone" }, [icone("open-ai-logo", true)]),
       el("div", {}, [el("h3", { texto: "Conta ChatGPT (Codex)" }), el("p", { texto: "Desenha o pôster do infográfico com o gerador de imagens do ChatGPT, na sua assinatura." })]),
-      selo(c.conectado || s.openai, c.conectado ? "Conectada" : "Chave da OpenAI", "Não conectada"),
+      c.conectado ? seloSaude("codex", true) : selo(!!s.openai, "Chave da OpenAI", "Não conectada"),
     ]),
   ];
   const caixaLogin = el("div", { class: "codex-login" });
+  const problema = c.conectado ? avisoSaude("codex") : null;
+  if (problema) filhos.push(problema);
+  const x = s.saude && s.saude.codex;
 
   if (c.conectado) {
-    filhos.push(el("p", { class: "con-texto", texto: c.origem === "app"
-      ? "Conectada por aqui, pelo login do Codex. Para trocar de conta, desconecte e entre de novo."
-      : "Usando o Codex que já está logado neste servidor. Para usar outra conta do ChatGPT só neste app, entre abaixo." }));
-    if (c.origem === "app") filhos.push(el("button", { class: "btn btn--fantasma", onclick: sairDoCodex }, [icone("plug"), "Desconectar conta ChatGPT"]));
-    else {
-      const outra = el("button", { class: "btn btn--secundario" }, [el("span", { class: "rotulo" }, [icone("sign-in"), "Entrar com outra conta"])]);
-      outra.addEventListener("click", () => entrarNoCodex(outra, caixaLogin));
-      filhos.push(outra, caixaLogin);
-    }
-  } else {
-    const entrar = el("button", { class: "btn btn--primario btn--grande btn--bloco" }, [el("span", { class: "rotulo" }, [icone("sign-in"), "Entrar com a conta do ChatGPT"])]);
-    entrar.addEventListener("click", () => entrarNoCodex(entrar, caixaLogin));
-    filhos.push(el("p", { class: "con-texto", texto: "Aparece um código. Abra o link em qualquer aparelho (pode ser o celular), entre na sua conta do ChatGPT e digite o código. A conexão aparece aqui sozinha." }), entrar, caixaLogin);
+    filhos.push(el("p", { class: "con-texto", texto: (c.origem === "app"
+      ? "Conectada por aqui, com a sua conta do ChatGPT."
+      : s.local ? "Usando o Codex que já está logado neste computador." : "Usando o Codex que já está logado no servidor.") + (x && x.ok ? ` Conferida ${quando(x.em)}.` : "") }));
+  } else if (s.codexSemSistema) {
+    filhos.push(el("button", { class: "btn btn--secundario", onclick: () => acao(() => postar("/api/ia/codex/usar-sistema"), "Codex do computador em uso de novo.", "codex") }, [icone("arrow-counter-clockwise"), s.local ? "Usar de novo o Codex deste computador" : "Usar de novo o Codex do servidor"]));
   }
-  if (c.login && c.login.estado === "aguardando" && c.login.codigo) mostrarCodigo(caixaLogin, c.login);
+  const entrar = el("button", { class: "btn " + (c.conectado && !problema ? "btn--secundario" : "btn--primario") }, [el("span", { class: "rotulo" }, [icone("sign-in"), c.conectado ? "Entrar de novo / outra conta" : "Entrar com a conta do ChatGPT"])]);
+  entrar.addEventListener("click", () => entrarNoCodex(entrar, caixaLogin));
+  const botoes = el("div", { class: "con-acoes" }, [
+    c.conectado ? el("button", { class: "btn btn--secundario", onclick: () => testarContas("codex") }, [icone("pulse"), "Testar agora"]) : null,
+    entrar,
+    c.conectado ? el("button", { class: "btn btn--fantasma", onclick: sairDoCodex }, [icone("plug"), "Desconectar"]) : null,
+  ].filter(Boolean));
+  if (!c.conectado) filhos.push(el("p", { class: "con-texto", texto: "Aparece um código. Abra o link em qualquer aparelho (pode ser o celular), entre na sua conta do ChatGPT e digite o código. A conexão aparece aqui sozinha." }));
+  filhos.push(botoes, caixaLogin);
+  if (c.login && c.login.estado === "aguardando" && c.login.codigo) { entrar.hidden = true; mostrarCodigo(caixaLogin, c.login); }
 
   filhos.push(el("details", { class: "con-alternativa", open: !!s.openai && !c.conectado }, [
     el("summary", { texto: "Usar uma chave da API da OpenAI em vez da conta" }),
@@ -243,14 +327,15 @@ async function entrarNoCodex(btn, caixa) {
     try {
       const d = await (await api("/api/ia/codex/estado", { method: "POST", body: "{}" })).json();
       const est = d.login && d.login.estado;
-      if (est === "conectado") { clearInterval(sondagem); aviso("Conta do ChatGPT conectada."); await lerEstado(); desenhar(); }
+      if (est === "conectado") { clearInterval(sondagem); aviso("Conta do ChatGPT conectada. Conferindo..."); await lerEstado(); await testarContas("codex"); }
       else if (est === "erro") { clearInterval(sondagem); aviso("Login não concluído: " + (d.login.erro || ""), "warning"); await lerEstado(); desenhar(); }
     } catch { /* tenta de novo */ }
   }, 3000);
 }
 
 async function sairDoCodex() {
-  if (!confirm("Desconectar a conta do ChatGPT deste app?")) return;
+  const origem = estado && estado.codexInfo && estado.codexInfo.origem;
+  if (!confirm(origem === "app" ? "Desconectar a conta do ChatGPT deste app?" : "Desconectar a conta do ChatGPT deste app? O Codex do computador não é apagado; o app só deixa de usá-lo.")) return;
   try { await api("/api/ia/codex/sair", { method: "POST", body: "{}" }); aviso("Conta do ChatGPT desconectada.", "plug"); }
   catch (e) { aviso("Não deu: " + e.message, "warning"); }
   await lerEstado();
@@ -273,9 +358,10 @@ function secaoApi(s) {
 let modo = "lista";
 let passo = 0;
 const CHAVE_VISTO = "forge-assistente-visto";
-const prontoClaude = (s) => !!(s && ((s.claude && s.claude.logado) || s.tokenClaude || s.chaveApi));
-const prontoGroq = (s) => !!(s && s.groq);
-const prontoImagem = (s) => !!(s && ((s.codexInfo && s.codexInfo.conectado) || s.codex || s.openai));
+const semFalha = (s, c) => !(s && s.saude && s.saude[c] && s.saude[c].ok === false);
+const prontoClaude = (s) => !!(s && ((s.claude && s.claude.logado && !s.claudeSemSistema) || s.tokenClaude || s.chaveApi)) && semFalha(s, "claude");
+const prontoGroq = (s) => !!(s && s.groq) && semFalha(s, "groq");
+const prontoImagem = (s) => !!(s && ((s.codexInfo && s.codexInfo.conectado) || s.codex || s.openai)) && semFalha(s, "codex");
 const PASSOS = [
   { id: "claude", titulo: "Conta Claude", papel: "O cérebro", obrigatorio: true, pronto: prontoClaude,
     texto: "Lê o que foi falado no vídeo e cria o resumo, o mapa mental, o organograma, a linha do tempo, as perguntas e o roteiro do infográfico. Usa a sua assinatura Claude (Pro ou Max).",
@@ -303,7 +389,7 @@ function desenharAssistente() {
   // tela final: resumo do que está pronto
   if (passo >= total) {
     const essencial = prontoClaude(s);
-    return abrirFolha([
+    return abrir([
       el("h2", { id: "folha-titulo", texto: essencial ? "Tudo pronto!" : "Quase lá" }),
       trilha,
       el("ul", { class: "ass-resumo" }, PASSOS.map((p) => el("li", { class: p.pronto(s) ? "ok" : "" }, [
@@ -326,7 +412,7 @@ function desenharAssistente() {
       pronto ? "Próximo" : p.obrigatorio ? "Fazer depois" : "Pular", icone("arrow-right"),
     ]),
   ]);
-  abrirFolha([
+  abrir([
     el("p", { class: "ass-topo mono", texto: `Primeiros passos · ${passo + 1} de ${total}` }),
     el("h2", { id: "folha-titulo" }, [p.titulo, el("span", { class: "ass-papel", texto: p.papel })]),
     trilha,
@@ -357,18 +443,54 @@ export async function talvezAbrirAssistente() {
   else localStorage.setItem(CHAVE_VISTO, "1");
 }
 
+// Reconectar: aberto pelo próprio Estúdio quando a geração falha por causa de uma conta.
+// Mostra o motivo, só a conta com problema e, quando ela voltar a funcionar, o botão para tentar de novo.
+let foco = null; // { conta, motivo, aoConectar, rotulo }
+const SECAO_DA_CONTA = { claude: (s) => [secaoClaude(s), secaoApi(s)], groq: (s) => [secaoGroq(s)], codex: (s) => [secaoImagem(s)], api: (s) => [secaoClaude(s), secaoApi(s)] };
+const NOME_CONTA = { claude: "conta Claude", api: "conta Claude", groq: "chave da Groq", codex: "conta do ChatGPT (Codex)" };
+function desenharReconectar() {
+  const s = estado;
+  const conta = foco.conta === "api" ? "claude" : foco.conta;
+  const x = s && s.saude ? s.saude[conta] : null;
+  const voltou = x && x.ok === true;
+  abrir([
+    el("h2", { id: "folha-titulo", texto: voltou ? "Conta funcionando de novo" : `Reconectar a ${NOME_CONTA[foco.conta] || foco.conta}` }),
+    voltou
+      ? el("p", { class: "ass-pronto" }, [icone("check-circle", true), "Testei agora e está funcionando. Pode gerar de novo."])
+      : x && x.ok === false ? null // o motivo já aparece na seção da conta, logo abaixo
+        : el("p", { class: "con-problema", role: "alert" }, [icone("warning-circle", true), el("span", { texto: (foco.motivo || "A conta não está funcionando").replace(/^./, (c) => c.toUpperCase()) })]),
+    voltou && foco.aoConectar
+      ? el("button", { class: "btn btn--primario btn--grande btn--bloco", onclick: () => { const f = foco.aoConectar; foco = null; modo = "lista"; fecharFolha(); f(); } }, [icone("sparkle", true), foco.rotulo || "Gerar de novo"])
+      : null,
+    s && s.podeConfigurar
+      ? el("div", { class: "con-lista" }, (SECAO_DA_CONTA[foco.conta] || SECAO_DA_CONTA.claude)(s))
+      : el("p", { class: "con-texto", texto: "Para conectar contas pela rede, o app precisa ter uma senha. Abra o app no próprio computador onde ele está instalado." }),
+    el("button", { class: "btn btn--fantasma btn--bloco", onclick: fecharFolha }, ["Fechar"]),
+  ].filter(Boolean), { aoFechar: () => { clearInterval(sondagem); foco = null; modo = "lista"; } });
+}
+
+export async function abrirReconectar(conta, { motivo = "", aoConectar = null, rotulo = "" } = {}) {
+  foco = { conta, motivo, aoConectar, rotulo };
+  modo = "reconectar";
+  await lerEstado();
+  desenhar();
+  testarContas(conta === "api" ? "claude" : conta); // mostra o estado real da conta já de cara
+}
+
 function desenhar() {
+  if (modo === "reconectar" && foco) return desenharReconectar();
   if (modo === "assistente" && estado && estado.podeConfigurar) return desenharAssistente();
   const s = estado;
-  if (!s) return abrirFolha([el("h2", { id: "folha-titulo", texto: "Conectar IA" }), el("p", { class: "con-texto", texto: "Não deu para ler o estado das conexões. Tente de novo." })]);
+  if (!s) return abrir([el("h2", { id: "folha-titulo", texto: "Conectar IA" }), el("p", { class: "con-texto", texto: "Não deu para ler o estado das conexões. Tente de novo." })]);
   if (!s.podeConfigurar) {
-    return abrirFolha([el("h2", { id: "folha-titulo", texto: "Conectar IA" }), el("p", { class: "con-texto", texto: "Para conectar contas pela rede, o app precisa ter uma senha (SENHA no arquivo .env). Abra o app no próprio computador onde ele está instalado." })]);
+    return abrir([el("h2", { id: "folha-titulo", texto: "Conectar IA" }), el("p", { class: "con-texto", texto: "Para conectar contas pela rede, o app precisa ter uma senha (SENHA no arquivo .env). Abra o app no próprio computador onde ele está instalado." })]);
   }
   const emUso = s.provedor ? `Em uso agora: ${NOMES[s.provedor] || s.provedor}.` : "Nenhuma IA conectada ainda.";
-  abrirFolha([
+  abrir([
     el("h2", { id: "folha-titulo", texto: "Conectar IA" }),
     el("p", { class: "meta", texto: emUso }),
-    el("button", { class: "btn btn--secundario btn--bloco ass-abrir", onclick: abrirAssistente }, [icone("compass", true), "Primeiros passos (guia de 3 etapas)"]),
+    el("button", { class: "btn btn--secundario btn--bloco", disabled: testando, onclick: () => testarContas() }, [icone(testando ? "circle-notch" : "pulse", true), testando ? "Testando as contas de verdade..." : "Testar todas as contas agora"]),
+    el("button", { class: "btn btn--fantasma btn--bloco ass-abrir", onclick: abrirAssistente }, [icone("compass", true), "Primeiros passos (guia de 3 etapas)"]),
     el("div", { class: "con-lista" }, [secaoClaude(s), secaoGroq(s), secaoImagem(s), secaoApi(s)]),
     el("button", { class: "btn btn--secundario btn--bloco", onclick: fecharFolha }, ["Fechar"]),
     el("button", { class: "btn btn--fantasma btn--bloco", onclick: verTermo }, [icone("scroll"), "Termo de uso"]),
@@ -379,4 +501,8 @@ export async function abrirConexoes() {
   await lerEstado();
   modo = "lista";
   desenhar();
+  // ao abrir, confere de verdade as contas que não foram testadas há pouco
+  const sa = (estado && estado.saude) || {};
+  const velho = (x) => !x || Date.now() - x.em > 2 * 60 * 1000;
+  if (estado && estado.podeConfigurar && (velho(sa.claude) || velho(sa.groq) || velho(sa.codex))) testarContas();
 }

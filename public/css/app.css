@@ -587,6 +587,12 @@ i.ph, i.ph-fill { font-size: 20px; line-height: 1; }
 .selo-con { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: var(--r-pill); font-size: 12px; font-weight: 650; background: var(--surface-3); color: var(--ink-2); }
 .selo-con i { font-size: 14px; }
 .selo-con--ok { background: rgba(134, 214, 168, .14); color: var(--ok); }
+.selo-con--erro { background: var(--danger-soft); color: var(--danger); }
+.selo-con--testando i { animation: girar 1s linear infinite; }
+.con-problema { display: flex; gap: 8px; align-items: flex-start; margin: var(--s-3) 0 0; padding: 10px 12px; border-radius: var(--r-sm); background: var(--danger-soft); color: var(--danger); font-size: 13.5px; line-height: 1.45; }
+.con-problema i { font-size: 17px; flex: none; margin-top: 1px; }
+.con-acoes { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-3); }
+.con-acoes .btn { flex: 1 1 auto; }
 .con-texto { font-size: 14px; color: var(--ink-2); }
 .con-texto a { color: var(--accent-text); }
 .comando { display: flex; align-items: center; gap: var(--s-2); padding: 6px 6px 6px var(--s-3); border-radius: var(--r-sm); background: #000; border: 1px solid var(--line-2); margin-top: 6px; }

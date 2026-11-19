@@ -356,7 +356,7 @@ async function traduzirBlocos(cfg, provedor, blocos, idioma, pasta, aoProgredir,
       else r = await viaApi(cfg, pedido, ESQUEMA_TRADUCAO, SISTEMA_TRADUCAO);
     } catch (e) {
       conferirCancelado();
-      if (/login do Claude|nao esta instalado/i.test(e.message)) throw e; // não adianta repetir
+      if (e.conta || /nao esta instalado/i.test(e.message)) throw e; // conta sem acesso: não adianta repetir
       console.warn("traducao: lote falhou, vai ser refeito:", e.message);
       return;
     }
@@ -422,6 +422,7 @@ async function enviarParaGroq(form) {
   const chaves = chavesGroq();
   let ultimoErro = null;
   let esperaMin = null; // menor espera pedida entre as chaves que bateram no limite
+  let recusadas = 0; // chaves recusadas (401/403): todas recusadas = chave apagada ou inválida
   for (let n = 0; n < chaves.length; n++) {
     const i = (groqPreferida + n) % chaves.length;
     let r;
@@ -443,10 +444,12 @@ async function enviarParaGroq(form) {
     ultimoErro = `Groq ${r.status}: ${corpo.slice(0, 160)}`;
     if (r.status === 429) { const s = esperaDoLimite(r, corpo); esperaMin = esperaMin === null ? s : Math.min(esperaMin, s); }
     // limite de uso ou chave recusada: tenta a próxima; outros erros param aqui
+    if (r.status === 401 || r.status === 403) recusadas++;
     if (![401, 403, 429].includes(r.status)) break;
     console.warn(`groq: chave ${i + 1} de ${chaves.length} recusou (${r.status}), tentando a próxima`);
   }
   if (esperaMin !== null) throw Object.assign(new Error("limite de uso da Groq atingido (" + ultimoErro + ")"), { limite: true, esperaS: esperaMin });
+  if (recusadas && recusadas === chaves.length) throw Object.assign(new Error("a Groq recusou a chave conectada (apagada ou inválida): conecte uma chave nova da Groq"), { conta: "groq" });
   throw new Error("a transcricao falhou (" + ultimoErro + ")");
 }
 
@@ -642,7 +645,7 @@ async function viaClaudeCli(cfg, pedido, pasta, modelo = cfg.modeloCli, esquema 
       env: process.env.CLAUDE_CODE_OAUTH_TOKEN ? { ANTHROPIC_API_KEY: null } : undefined,
     });
   } catch (e) {
-    if (e.code === "ENOENT") throw new Error("o Claude Code (claude) nao esta instalado no servidor");
+    if (e.code === "ENOENT") throw Object.assign(new Error("o Claude Code não está instalado neste computador"), { conta: "claude" });
     saida = e.saida || "";
     if (!saida) throw e;
   }
@@ -654,7 +657,7 @@ async function viaClaudeCli(cfg, pedido, pasta, modelo = cfg.modeloCli, esquema 
       console.warn(`claude recusou o modelo ${modelo}; usando o padrão da instalação`);
       return viaClaudeCli(cfg, pedido, pasta, null, esquema, sistema, ordem);
     }
-    if (/auth|login|OAuth/i.test(motivo)) throw new Error("o login do Claude Code expirou: rode `claude` no servidor e entre de novo (" + motivo.slice(0, 120) + ")");
+    if (/auth|login|OAuth|401|credential|token/i.test(motivo)) throw Object.assign(new Error("a conta Claude não está mais autorizada (login expirado ou cancelado): entre de novo na conta Claude (" + motivo.slice(0, 120) + ")"), { conta: "claude" });
     throw new Error("o claude falhou: " + motivo.slice(0, 200));
   }
   if (d.structured_output && typeof d.structured_output === "object") return d.structured_output;
@@ -696,28 +699,109 @@ async function detectarProvedor(cfg) {
   // auto: o que foi conectado pela tela vem primeiro
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return "claude-cli";
   if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return "api";
-  if ((await statusClaude(cfg)).logado) return "claude-cli";
+  if (process.env.CLAUDE_SEM_SISTEMA !== "1" && (await statusClaude(cfg)).logado) return "claude-cli";
   if (await existe("ant", ["auth", "status"])) return "api";
   return null;
 }
 
 // ---------- testes usados pela tela "Conectar Claude" antes de salvar ----------
-export async function testarTokenClaude(cfg, token) {
+// Pede um "OK" de verdade ao Claude: é o único jeito de saber se o login ainda vale
+// ("claude auth status" diz "logado" mesmo com o login expirado).
+async function testarClaudeCli(cfg, env) {
   let saida;
   try {
     saida = await rodar(cfg.claude, [
       "-p", "Responda apenas com a palavra OK.",
       "--output-format", "json", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
-    ], { timeoutMs: 90000, env: { CLAUDE_CODE_OAUTH_TOKEN: token, ANTHROPIC_API_KEY: null } });
+    ], { timeoutMs: 90000, env });
   } catch (e) {
-    if (e.code === "ENOENT") throw new Error("o Claude Code nao esta instalado neste servidor");
+    if (e.code === "ENOENT") throw new Error("o Claude Code não está instalado neste computador");
     saida = e.saida || "";
     if (!saida) throw e;
   }
   let d;
-  try { d = JSON.parse(saida); } catch { throw new Error("o claude respondeu algo inesperado"); }
-  if (d.is_error) throw new Error("o token nao funcionou: " + String(d.result || d.subtype).slice(0, 160));
+  try { d = JSON.parse(saida); } catch { throw new Error("o Claude respondeu algo inesperado"); }
+  if (d.is_error) throw new Error("a conta Claude recusou: " + String(d.result || d.subtype).slice(0, 160));
 }
+export const testarTokenClaude = (cfg, token) => testarClaudeCli(cfg, { CLAUDE_CODE_OAUTH_TOKEN: token, ANTHROPIC_API_KEY: null });
+
+// ---------- saúde das contas: teste real, guardado por alguns minutos ----------
+// { claude: {ok, erro, em}, groq: {ok, validas, total, erro, em}, codex: {ok, erro, em} }; ok null = não conectada
+const saude = {};
+// cada troca de conta muda a "geração": teste que começou antes da troca não grava resultado velho
+const geracao = { claude: 0, groq: 0, codex: 0 };
+const VALIDADE_OK = 10 * 60 * 1000; // teste que deu certo vale 10 min (não gasta cota à toa)
+async function medir(conta, fn) {
+  const g = geracao[conta];
+  let r;
+  try { r = { ok: true, ...(await fn()), em: Date.now() }; }
+  catch (e) { r = { ok: false, erro: String(e.message || e).slice(0, 220), em: Date.now() }; }
+  if (g === geracao[conta]) saude[conta] = r;
+  return r;
+}
+export function esquecerSaude(conta) {
+  for (const k of conta ? [conta] : Object.keys(geracao)) { delete saude[k]; geracao[k]++; }
+}
+export async function testarClaudeAgora(cfg) {
+  const provedor = await detectarProvedor(cfg);
+  if (!provedor) { saude.claude = { ok: null, erro: "nenhuma conta Claude conectada", em: Date.now() }; return saude.claude; }
+  if (provedor === "demo") { saude.claude = { ok: true, em: Date.now() }; return saude.claude; }
+  return medir("claude", async () => {
+    if (provedor === "api") {
+      try { await testarChaveApi(process.env.ANTHROPIC_API_KEY); } catch (e) { throw new Error("a chave da API Anthropic foi recusada (" + String(e.status || e.message).slice(0, 80) + ")"); }
+      return { via: "api" };
+    }
+    await testarClaudeCli(cfg, process.env.CLAUDE_CODE_OAUTH_TOKEN ? { ANTHROPIC_API_KEY: null } : undefined);
+    return { via: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "token" : "login" };
+  });
+}
+export async function testarGroqAgora() {
+  const chaves = chavesGroq();
+  if (!chaves.length) { saude.groq = { ok: null, validas: 0, total: 0, em: Date.now() }; return saude.groq; }
+  const res = await Promise.all(chaves.map((c) => testarChaveGroq(c).then(() => true, () => false)));
+  const validas = res.filter(Boolean).length;
+  const r = { ok: validas > 0, validas, total: chaves.length, erro: validas ? null : "a Groq recusou " + (chaves.length > 1 ? "todas as chaves" : "a chave"), em: Date.now() };
+  if (chaves.join() === chavesGroq().join()) saude.groq = r;
+  return r;
+}
+export async function testarCodexAgora() {
+  await verificarCodex();
+  if (!codexPronto) { saude.codex = { ok: null, erro: "conta do ChatGPT não conectada", em: Date.now() }; return saude.codex; }
+  return medir("codex", async () => {
+    const semSegredos = { CODEX_HOME: homeCodex() };
+    for (const k of Object.keys(process.env)) if (/KEY|TOKEN|SENHA|SECRET|PASS/i.test(k)) semSegredos[k] = null;
+    const pasta = await mkdtemp(path.join(tmpdir(), "forge-codex-teste-"));
+    try {
+      const saida = await rodar(CODEX, [
+        "exec", "--skip-git-repo-check", "--json", "-s", "read-only",
+        "--disable", "apps", "--disable", "plugins", "--disable", "multi_agent", "--disable", "goals",
+        "-c", "mcp_servers={}", "-c", 'approval_policy="never"', "-c", 'shell_environment_policy.inherit="none"',
+        "-C", pasta, "-",
+      ], { entrada: "Responda apenas com a palavra OK. Não use ferramentas.", cwd: pasta, timeoutMs: 120000, env: semSegredos }).catch((e) => e.saida || Promise.reject(e));
+      const linhas = saida.split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const falha = linhas.find((l) => l.type === "turn.failed" || l.type === "error");
+      if (falha || !linhas.some((l) => l.type === "turn.completed")) throw new Error("a conta do ChatGPT recusou: " + (falha ? JSON.stringify(falha.error || falha.message || falha).slice(0, 160) : "sem resposta"));
+      return { origem: codexOrigem };
+    } finally { await rm(pasta, { recursive: true, force: true }).catch(() => {}); }
+  });
+}
+// conferência antes de gerar: usa o teste recente que deu certo; senão testa de novo agora
+export async function conferirParaEstudo(cfg) {
+  const recente = (x) => x && x.ok === true && Date.now() - x.em < VALIDADE_OK;
+  const c = recente(saude.claude) ? saude.claude : await testarClaudeAgora(cfg);
+  if (c.ok !== true) return { ok: false, conta: "claude", erro: c.ok === null ? "conecte a conta Claude para gerar o estudo" : "a conta Claude não está funcionando: " + c.erro };
+  const g = recente(saude.groq) ? saude.groq : await testarGroqAgora();
+  if (g.ok === false) return { ok: false, conta: "groq", erro: g.erro + ": conecte uma chave nova da Groq (ela transcreve vídeos sem legenda)" };
+  return { ok: true };
+}
+export async function conferirParaInfografico() {
+  const recente = (x) => x && x.ok === true && Date.now() - x.em < VALIDADE_OK;
+  if (process.env.IMAGEM_DEMO === "1" || (!codexPronto && process.env.OPENAI_API_KEY)) return { ok: true };
+  const x = recente(saude.codex) ? saude.codex : await testarCodexAgora();
+  if (x.ok !== true) return { ok: false, conta: "codex", erro: x.ok === null ? "entre com a conta do ChatGPT para desenhar o infográfico" : "a conta do ChatGPT (Codex) não está funcionando: " + x.erro };
+  return { ok: true };
+}
+export const saudeAtual = () => ({ ...saude });
 
 export async function testarChaveApi(chave) {
   const client = new Anthropic({ apiKey: chave });
@@ -900,7 +984,7 @@ export function criarEstudos(cfg) {
     } catch (e) {
       if (ctx?.cancelado) { console.warn("estudo cancelado:", nome); return; }
       console.error("estudo falhou:", nome, e);
-      jobs.set(nome, { estado: "erro", etapa: null, erro: String(e.message || e).slice(0, 300) });
+      jobs.set(nome, { estado: "erro", etapa: null, erro: String(e.message || e).slice(0, 300), conta: e.conta || null });
     } finally {
       await rm(pasta, { recursive: true, force: true }).catch(() => {});
     }
@@ -1007,7 +1091,7 @@ export async function verificarCodex() {
   // "codex login status" escreve no stderr; o que vale é o código de saída (0 = logado)
   const tentar = async (home) => { try { await rodar(CODEX, ["login", "status"], { timeoutMs: 20000, env: { CODEX_HOME: home } }); return true; } catch { return false; } };
   if (loginNoApp() && await tentar(CODEX_HOME_APP)) { codexPronto = true; codexOrigem = "app"; }
-  else if (await tentar(CODEX_HOME_SERVIDOR)) { codexPronto = true; codexOrigem = "servidor"; }
+  else if (process.env.CODEX_SEM_SISTEMA !== "1" && await tentar(CODEX_HOME_SERVIDOR)) { codexPronto = true; codexOrigem = "servidor"; }
   else { codexPronto = false; codexOrigem = null; }
   return codexPronto;
 }
@@ -1088,6 +1172,7 @@ async function desenharCodex(prompt, pasta) {
   const linhas = saida.split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   const fio = linhas.find((l) => l.type === "thread.started")?.thread_id;
   const falha = linhas.find((l) => l.type === "turn.failed" || l.type === "error");
+  if (falha && /auth|login|401|unauthori[sz]ed|token|sign in/i.test(JSON.stringify(falha))) throw Object.assign(new Error("a conta do ChatGPT (Codex) não está mais autorizada: entre de novo"), { conta: "codex" });
   if (!fio) throw new Error("o Codex não respondeu" + (falha ? ": " + JSON.stringify(falha).slice(0, 200) : ""));
   const pastaImgs = path.join(home, "generated_images", fio);
   const arquivos = (await readdir(pastaImgs).catch(() => [])).filter((n) => /\.(png|jpe?g|webp)$/i.test(n));
@@ -1208,7 +1293,7 @@ export function criarInfograficos(cfg) {
       jobs.delete(nome);
     } catch (e) {
       console.error("infografico falhou:", nome, e);
-      jobs.set(nome, { estado: "erro", etapa: null, erro: String(e.message || e).slice(0, 300) });
+      jobs.set(nome, { estado: "erro", etapa: null, erro: String(e.message || e).slice(0, 300), conta: e.conta || null });
     } finally {
       await rm(pasta, { recursive: true, force: true }).catch(() => {});
     }
