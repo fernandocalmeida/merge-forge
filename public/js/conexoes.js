@@ -253,8 +253,8 @@ function secaoImagem(s) {
   const filhos = [
     el("div", { class: "con-cabeca" }, [
       el("span", { class: "con-icone" }, [icone("open-ai-logo", true)]),
-      el("div", {}, [el("h3", { texto: "Conta ChatGPT (Codex)" }), el("p", { texto: "Desenha o pôster do infográfico com o gerador de imagens do ChatGPT, na sua assinatura." })]),
-      c.conectado ? seloSaude("codex", true) : selo(!!s.openai, "Chave da OpenAI", "Não conectada"),
+      el("div", {}, [el("h3", { texto: "Conta ChatGPT (Codex)" }), el("p", { texto: "Opcional, mas necessária para gerar o infográfico: desenha o pôster com o gerador de imagens do ChatGPT, na sua assinatura. Sem ela, todo o resto funciona." })]),
+      c.conectado ? seloSaude("codex", true) : selo(!!s.openai, "Chave da OpenAI", "Opcional · necessária para o infográfico"),
     ]),
   ];
   const caixaLogin = el("div", { class: "codex-login" });
@@ -372,7 +372,7 @@ const PASSOS = [
     passos: ["Entre em console.groq.com (dá para entrar com a conta Google).", "No menu, abra API Keys e toque em Create API Key.", "Copie a chave e cole no campo abaixo."],
     secao: (s) => [secaoGroq(s)] },
   { id: "imagem", titulo: "Conta ChatGPT", papel: "O ilustrador", obrigatorio: false, pronto: prontoImagem,
-    texto: "Desenha o pôster do infográfico com o gerador de imagens do ChatGPT, na sua assinatura. É opcional: sem ele, todo o resto funciona (inclusive a Apostila Técnica Interativa).",
+    texto: "Opcional, mas necessária para gerar o infográfico: desenha o pôster com o gerador de imagens do ChatGPT, na sua assinatura. Sem ela, todo o resto funciona (inclusive a Apostila Técnica Interativa).",
     secao: (s) => [secaoImagem(s)] },
 ];
 
@@ -394,7 +394,7 @@ function desenharAssistente() {
       trilha,
       el("ul", { class: "ass-resumo" }, PASSOS.map((p) => el("li", { class: p.pronto(s) ? "ok" : "" }, [
         icone(p.pronto(s) ? "check-circle" : p.obrigatorio ? "warning-circle" : "circle-dashed", true),
-        el("span", {}, [el("b", { texto: p.titulo }), el("small", { texto: p.pronto(s) ? "Conectado" : p.obrigatorio ? "Falta conectar: sem ele o Estúdio IA não funciona" : "Não conectado (opcional)" })]),
+        el("span", {}, [el("b", { texto: p.titulo }), el("small", { texto: p.pronto(s) ? "Conectado" : p.obrigatorio ? "Falta conectar: sem ele o Estúdio IA não funciona" : p.id === "imagem" ? "Não conectado (opcional, necessário para o infográfico)" : "Não conectado (opcional)" })]),
       ]))),
       el("p", { class: "con-texto", texto: essencial
         ? "Agora é só colar o link de um vídeo (ou enviar um arquivo), baixar e tocar em \"Gerar estudo com IA\". Você pode voltar aqui quando quiser em Conectar IA."

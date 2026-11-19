@@ -1,7 +1,7 @@
 // Service worker do Merge Forge.
 // Rede primeiro (o código novo chega na hora); sem internet, abre a cópia guardada.
 // API e vídeos nunca passam pelo cache (vídeo usa Range).
-const VERSAO = "forge-v48";
+const VERSAO = "forge-v50";
 const CASCA = ["/", "/css/app.css", "/css/estudio.css", "/js/app.js", "/js/estudio.js", "/js/redes.js", "/js/conexoes.js", "/js/celular.js", "/js/poster.js",
   "/js/exportar.js", "/js/termo.js", "/manifest.webmanifest", "/logo-forge.png", "/icone-forge-192.png", "/icone-forge-512.png", "/icone-forge-512-maskable.png"];
 

@@ -385,6 +385,15 @@ i.ph, i.ph-fill { font-size: 20px; line-height: 1; }
 .promo small { display: block; font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 1.4; }
 .promo > i { color: var(--accent-text); transition: transform .35s var(--mola); }
 .promo:hover > i { transform: translate(3px, -3px); }
+/* aviso "Antes de usar o Estúdio IA" (assinatura Claude e tradução automática) */
+.aviso-uso { padding: var(--s-5); }
+.aviso-uso h2 { font-size: 15px; }
+.aviso-uso ul { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: grid; gap: var(--s-4); }
+.aviso-uso li { display: grid; grid-template-columns: 36px 1fr; gap: 12px; align-items: start; }
+.aviso-ic { width: 36px; height: 36px; border-radius: 11px; background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent-text); display: flex; align-items: center; justify-content: center; }
+.aviso-ic i { font-size: 18px; }
+.aviso-uso strong { display: block; font-size: 14px; }
+.aviso-uso small { display: block; font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 1.45; }
 
 /* resultado do download + ferramentas de IA (um botão por função) */
 .resultado { padding: var(--s-5); animation: subir .6s var(--ease); }
