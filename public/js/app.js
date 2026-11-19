@@ -370,13 +370,7 @@ const LISTA_REDES = ["instagram", "tiktok", "youtube", "facebook", "x"];
 for (const rede of LISTA_REDES) $("#redes-suportadas").append(el("span", { class: "rede-pill", "data-rede": rede }, [chipRede(rede), REDES[rede].nome]));
 queueMicrotask(atualizarBotaoBaixar);
 
-// texto de exemplo que vai trocando de rede enquanto o campo está vazio
-let iRede = 0;
-setInterval(() => {
-  if (campo.value || document.hidden) return;
-  iRede = (iRede + 1) % LISTA_REDES.length;
-  $("#ph-anim").replaceChildren("Cole um link do ", el("b", { texto: REDES[LISTA_REDES[iRede]].nome }));
-}, 2200);
+// texto de exemplo fixo e para todas as redes (as redes aceitas aparecem logo abaixo do campo)
 
 function acenderRede() {
   const v = campo.value.trim();

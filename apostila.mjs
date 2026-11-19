@@ -212,8 +212,9 @@ h3.sub-tit { font-size: 13pt; margin: 14pt 0 8pt; }
 .aula-texto { font-size: 11.5pt; line-height: 1.6; margin-bottom: 12pt; }
 .trecho { border-left: 3px solid #c99a3c; background: #f7f4ec; border-radius: 0 9px 9px 0; padding: 9pt 12pt; font-size: 9.6pt; color: #3d3c37; break-inside: avoid; }
 .trecho small { display: block; font: 700 7.5pt Geist; letter-spacing: .18em; text-transform: uppercase; color: #a87b22; margin-bottom: 4pt; }
-.citacao { margin: 12pt 0 0; padding: 0 0 0 14pt; border-left: 0; font-size: 13pt; font-weight: 600; line-height: 1.4; position: relative; break-inside: avoid; }
-.citacao::before { content: "\\201C"; position: absolute; left: -2pt; top: -8pt; font-size: 34pt; color: #c99a3c; font-weight: 800; }
+/* aspas numa coluna própria: antes ficavam por cima da 1ª letra ("Os" parecia "40s") */
+.citacao { margin: 12pt 0 0; padding: 0 0 0 30pt; border-left: 0; font-size: 13pt; font-weight: 600; line-height: 1.4; position: relative; break-inside: avoid; }
+.citacao::before { content: "\\201C"; position: absolute; left: 0; top: -4pt; font: 700 40pt/1 Georgia, "Times New Roman", serif; color: #c99a3c; }
 .citacao span { display: block; font: 500 8.5pt "Geist Mono"; color: #9a958a; margin-top: 4pt; }
 .aula-fixa { margin-top: 12pt; border: 1px dashed #d9cfb5; border-radius: 9px; padding: 8pt 11pt; font-size: 9.3pt; color: #4a4943; break-inside: avoid; }
 .aula-fixa b { color: #1c1d22; }

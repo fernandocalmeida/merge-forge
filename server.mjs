@@ -412,7 +412,8 @@ async function lerJson(caminho) {
 // fica guardada ao lado do vídeo (<base>.apostila.pdf) e é refeita quando o estudo ou o infográfico mudam.
 // Uma por vez: o Chrome que gera o PDF usa bastante memória.
 // "-v2": versão com links e marcadores; mudar o sufixo faz todas serem geradas de novo
-const arquivoApostila = (nome) => path.join(DOWNLOADS_DIR, baseDe(nome) + ".apostila-v2.pdf");
+// v3 (19/11): aspas da citação corrigidas e transcrição revisada; mudar o sufixo faz as apostilas antigas serem montadas de novo
+const arquivoApostila = (nome) => path.join(DOWNLOADS_DIR, baseDe(nome) + ".apostila-v3.pdf");
 let filaApostila = Promise.resolve();
 const gerandoApostila = new Map();
 async function garantirApostila(nome) {
@@ -891,7 +892,7 @@ const servidor = http.createServer(async (req, res) => {
       await unlink(arquivoApostila(nome)).catch(() => {});
       await unlink(arquivoLegendado(nome)).catch(() => {});
       await unlink(fichaLegendado(arquivoLegendado(nome))).catch(() => {});
-      await unlink(path.join(DOWNLOADS_DIR, baseDe(nome) + ".apostila.pdf")).catch(() => {});
+      for (const velha of [".apostila.pdf", ".apostila-v2.pdf"]) await unlink(path.join(DOWNLOADS_DIR, baseDe(nome) + velha)).catch(() => {});
       for (let i = 1; i <= 8; i++) for (const x of [".jpg", ".png"]) await unlink(`${prefixoQuadro(nome)}${i}${x}`).catch(() => {});
       await unlink(arquivoCapa(nome)).catch(() => {});
       return json(res, 200, { ok: true });
