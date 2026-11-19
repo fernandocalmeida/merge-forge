@@ -1009,6 +1009,13 @@ export function criarEstudos(cfg) {
     const pasta = await mkdtemp(path.join(tmpdir(), "estudo-"));
     const duracao = Number(meta.duracao) || 600;
     try {
+      // contas conferidas aqui dentro (e não antes de responder ao toque): o painel com a porcentagem aparece na hora.
+      // Conta com problema vira erro com "conta" e a tela abre a reconexão ali mesmo.
+      if (provedor !== "demo") {
+        atualizar("transcrevendo", "Conferindo as contas", { faixa: [0, 1], previsto: 12 });
+        const pre = await conferirParaEstudo(cfg);
+        if (!pre.ok) throw Object.assign(new Error(pre.erro), { conta: pre.conta });
+      }
       atualizar("transcrevendo", "Procurando legendas do vídeo", { faixa: [1, 5], previsto: 12 });
       const leg = meta.url ? await legendas(cfg, meta.url, pasta) : null;
       let transcricao = leg ? leg.blocos : null;
@@ -1365,7 +1372,15 @@ export function criarInfograficos(cfg) {
     const pasta = await mkdtemp(path.join(tmpdir(), "infografico-"));
     try {
       const img = chaveImagem();
-      if (!img) throw new Error("entre no Codex com a conta do ChatGPT no servidor (codex login) ou conecte a chave da OpenAI em Conectar IA");
+      if (!img) throw Object.assign(new Error("entre com a conta do ChatGPT para desenhar o infográfico"), { conta: "codex" });
+      // contas conferidas aqui dentro: o andamento aparece na hora em vez de a tela esperar o teste
+      if (provedorTexto !== "demo") {
+        atualizar("roteiro", "Conferindo as contas", { faixa: [0, 2], previsto: 15 });
+        const preC = await conferirParaEstudo(cfg);
+        if (!preC.ok && preC.conta === "claude") throw Object.assign(new Error(preC.erro), { conta: "claude" });
+        const preI = await conferirParaInfografico();
+        if (!preI.ok) throw Object.assign(new Error(preI.erro), { conta: preI.conta });
+      }
       let estudo = await ler();
 
       // 1) roteiro de arte (só se ainda não existir)

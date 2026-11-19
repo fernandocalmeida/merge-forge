@@ -335,6 +335,8 @@ async function gerar(it, refazer, btn) {
       return reconectarConta(it, d.conta, d.erro, refazer);
     }
     if (!d.ok) throw new Error(d.erro || "não deu para começar");
+    // começou: se a conferência das contas falhar logo em seguida, a reconexão abre sozinha
+    estadoAnterior[it.nome] = "na-fila";
     estudo = null;
     ctx.recarregar();
     carregar(it);

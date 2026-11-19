@@ -5,7 +5,7 @@ import { readdir, stat, unlink, writeFile, rename, mkdir, readFile } from "node:
 import { createHash, createHmac, timingSafeEqual, scryptSync, randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { calcularProgresso, criarEstudos, motivoSemApostila, statusClaude, testarTokenClaude, testarChaveApi, testarChaveGroq, chavesGroq, criarInfograficos, chaveImagem, codexConectado, codexStatus, iniciarLoginCodex, sairCodex, verificarCodex, testarChaveGemini, testarChaveOpenAI, testarClaudeAgora, testarGroqAgora, testarCodexAgora, conferirParaEstudo, conferirParaInfografico, esquecerSaude, saudeAtual } from "./ia.mjs";
+import { calcularProgresso, criarEstudos, motivoSemApostila, statusClaude, testarTokenClaude, testarChaveApi, testarChaveGroq, chavesGroq, criarInfograficos, chaveImagem, codexConectado, codexStatus, iniciarLoginCodex, sairCodex, verificarCodex, testarChaveGemini, testarChaveOpenAI, testarClaudeAgora, testarGroqAgora, testarCodexAgora, esquecerSaude, saudeAtual } from "./ia.mjs";
 import { criarConfig } from "./config.mjs";
 import { itensExportaveis, enviarZip, disposicao, nomeSeguro, tamanhoAproximado, legendasSrt } from "./exportar.mjs";
 import { gerarApostila } from "./apostila.mjs";
@@ -931,12 +931,7 @@ const servidor = http.createServer(async (req, res) => {
       if (!estudo) return json(res, 409, { ok: false, erro: "gere o estudo do video primeiro" });
       if (!chaveImagem()) return json(res, 409, { ok: false, conta: "codex", erro: "entre com a conta do ChatGPT para desenhar o infográfico" });
       if (!estudos.configurado()) return json(res, 409, { ok: false, conta: "claude", erro: "conecte a conta Claude" });
-      if (!infograficos.estado(nome) || infograficos.estado(nome).estado === "erro") {
-        const preC = await conferirParaEstudo({ claude: CLAUDE_BIN });
-        if (!preC.ok && preC.conta === "claude") return json(res, 409, { ok: false, conta: "claude", erro: preC.erro });
-        const preI = await conferirParaInfografico();
-        if (!preI.ok) return json(res, 409, { ok: false, conta: preI.conta, erro: preI.erro });
-      }
+      // as contas são conferidas já dentro da criação (o andamento aparece na hora)
       if (refazer && estudo.poster) {
         for (let i = 1; i <= 8; i++) for (const x of [".jpg", ".png"]) await unlink(`${prefixoQuadro(nome)}${i}${x}`).catch(() => {});
         delete estudo.poster;
@@ -1243,11 +1238,7 @@ const servidor = http.createServer(async (req, res) => {
       if (!caminho || !existsSync(caminho)) return json(res, 404, { ok: false, erro: "arquivo nao encontrado" });
       if (!estudos.configurado()) return json(res, 409, { ok: false, conta: "claude", erro: "conecte a conta Claude para gerar o estudo" });
       if (!refazer && await lerJson(arquivoEstudo(nome))) return json(res, 200, { ok: true, estado: "pronto" });
-      // antes de começar: as contas funcionam de verdade? (login expirado, chave apagada...)
-      if (!estudos.emAndamento(nome)) {
-        const pre = await conferirParaEstudo({ claude: CLAUDE_BIN });
-        if (!pre.ok) return json(res, 409, { ok: false, conta: pre.conta, erro: pre.erro });
-      }
+      // as contas (login expirado, chave apagada...) são conferidas já dentro da geração: o painel aparece na hora
       if (refazer) { await unlink(arquivoEstudo(nome)).catch(() => {}); if (!legendagem.emAndamento(nome)) { await unlink(arquivoLegendado(nome)).catch(() => {}); await unlink(fichaLegendado(arquivoLegendado(nome))).catch(() => {}); } }
       else if (await lerJson(arquivoEstudo(nome))) return json(res, 200, { ok: true, estado: "pronto" });
       const meta = (await lerJson(arquivoMeta(nome))) || {};

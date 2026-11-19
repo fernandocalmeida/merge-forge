@@ -40,6 +40,7 @@ export function montarPoster(nome) {
         return reconectar(d.conta, d.erro, refazer);
       }
       if (!d.ok) throw new Error(d.erro || "não deu para começar");
+      estadoAntes = "na-fila"; // se a conferência das contas falhar logo depois, a reconexão abre sozinha
       inicio = Date.now();
       ultima = "";
       atualizar();
