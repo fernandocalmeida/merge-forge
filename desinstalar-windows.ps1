@@ -18,6 +18,9 @@ foreach ($n in @("Merge Forge.vbs", "Baixar Redes.vbs")) {
   if ((Test-Path $atalho) -and ((Get-Content $atalho -Raw) -like "*$cmd*")) { Remove-Item $atalho -Confirm:$false; Write-Host "Removido do inicio do Windows: $n" }
 }
 
-Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like "*$cmd*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Get-NetTCPConnection -LocalPort $Porta -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+# desliga SO este app: o cmd do iniciar.cmd desta pasta e o que ele abriu (o node). Quem mais estiver na porta nao e tocado.
+$todos = @(Get-CimInstance Win32_Process)
+$pais = @($todos | Where-Object { $_.Name -eq 'cmd.exe' -and $_.CommandLine -like "*$cmd*" })
+$ids = @($pais | ForEach-Object { $_.ProcessId })
+@($todos | Where-Object { $ids -contains $_.ParentProcessId }) + $pais | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Write-Host "Merge Forge desligado."

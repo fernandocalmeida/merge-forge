@@ -6,28 +6,34 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
 pasta = fso.GetParentFolderName(WScript.ScriptFullName)
 
-' porta: a do .env (PORT=...), ou 8798
-porta = "8798"
-If fso.FileExists(pasta & "\.env") Then
-  Set arq = fso.OpenTextFile(pasta & "\.env", 1)
-  Do Until arq.AtEndOfStream
-    linha = Trim(arq.ReadLine)
-    If Left(linha, 5) = "PORT=" Then porta = Trim(Mid(linha, 6))
-  Loop
-  arq.Close
-End If
-
+LerPorta
 If Not Responde() Then
   If fso.FileExists(pasta & "\iniciar.cmd") Then
     sh.Run "cmd /c """ & pasta & "\iniciar.cmd""", 0, False
     For i = 1 To 60
       WScript.Sleep 500
+      ' se outro programa estava na porta, o app liga na proxima livre e grava no .env: le de novo
+      LerPorta
       If Responde() Then Exit For
     Next
   End If
 End If
 sh.Run "http://localhost:" & porta & "/"
 
+' porta: a do .env (PORT=...), ou 8798
+Sub LerPorta()
+  porta = "8798"
+  If fso.FileExists(pasta & "\.env") Then
+    Set arq = fso.OpenTextFile(pasta & "\.env", 1)
+    Do Until arq.AtEndOfStream
+      linha = Trim(arq.ReadLine)
+      If Left(linha, 5) = "PORT=" Then porta = Trim(Mid(linha, 6))
+    Loop
+    arq.Close
+  End If
+End Sub
+
+' so conta como ligado se quem responde na porta e mesmo o Merge Forge (outro programa pode estar nela)
 Function Responde()
   Dim h
   On Error Resume Next
@@ -36,6 +42,6 @@ Function Responde()
   h.Open "GET", "http://127.0.0.1:" & porta & "/api/sessao", False
   h.Send
   Responde = (Err.Number = 0)
-  If Responde Then Responde = (h.Status > 0)
+  If Responde Then Responde = (h.Status = 200 And InStr(h.responseText, "termoVersao") > 0)
   On Error GoTo 0
 End Function

@@ -20,6 +20,8 @@ const DOWNLOADS_DIR = path.join(__dirname, "downloads");
 
 // ---------- configuração (tudo por variável de ambiente) ----------
 const PORT = Number(process.env.PORT || 8798);
+// identifica esta instalação (pasta do app) sem expor o caminho: usado para saber se quem está na porta é este mesmo app
+const INSTANCIA = createHash("sha1").update(__dirname.toLowerCase()).digest("hex").slice(0, 12);
 // Padrão: só este computador acessa. Para abrir no celular pela rede, use HOST=0.0.0.0 (e defina SENHA).
 const HOST = process.env.HOST || "127.0.0.1";
 // yt-dlp próprio do app (pasta .venv, criada pelo instalador/servidor) tem prioridade: ele é
@@ -718,7 +720,7 @@ const servidor = http.createServer(async (req, res) => {
 
     if (rota === "/api/sessao" && req.method === "GET") {
       const logado = autenticado(req);
-      return json(res, 200, { precisaSenha: senhaLigada(), logado, precisaTrocar: logado && precisaTrocar(), precisaTermo: termoPendente(), termoVersao: TERMO_VERSAO, termoAceitoEm: termoAceito ? termoAceito.aceitoEm : null });
+      return json(res, 200, { app: "merge-forge", instancia: INSTANCIA, precisaSenha: senhaLigada(), logado, precisaTrocar: logado && precisaTrocar(), precisaTermo: termoPendente(), termoVersao: TERMO_VERSAO, termoAceitoEm: termoAceito ? termoAceito.aceitoEm : null });
     }
 
     if (rota === "/api/entrar" && req.method === "POST") {
@@ -1292,11 +1294,11 @@ servidor.requestTimeout = 0; // o POST /api/baixar pode demorar alguns minutos
 
 // No Windows, "localhost" tenta primeiro o IPv6 (::1). Escutando só em 127.0.0.1, cada acesso por
 // localhost esperaria ~2s antes de cair no IPv4. Então, no modo local, escutamos também no ::1.
+let v6 = null;
 if (HOST === "127.0.0.1") {
-  const v6 = http.createServer(servidor.listeners("request")[0]);
+  v6 = http.createServer(servidor.listeners("request")[0]);
   v6.requestTimeout = 0;
-  v6.on("error", () => { /* máquina sem IPv6: segue só no IPv4 */ });
-  v6.listen(PORT, "::1");
+  v6.on("error", () => { /* máquina sem IPv6 (ou porta do ::1 ocupada): segue só no IPv4 */ });
 }
 
 // ---------- yt-dlp sempre em dia ----------
@@ -1373,8 +1375,54 @@ async function comAutoAtualizacao(operacao, nome) {
 setTimeout(() => atualizarYtdlp({ motivo: "ao ligar" }), 60 * 1000).unref();
 setInterval(() => atualizarYtdlp({ motivo: "verificação de 6h" }), 6 * 60 * 60 * 1000).unref();
 
-servidor.listen(PORT, HOST, () => {
-  console.log(`baixar-redes rodando em ${HOST}:${PORT} (senha: ${senhaPropria ? "propria" : SENHA ? "inicial (troca obrigatoria)" : "DESLIGADA"}, yt-dlp: ${YTDLP})`);
+// Porta ocupada (só na instalação do Windows, BAIXAR_SUPERVISIONADO=1; no servidor tudo fica como antes):
+// - se quem está nela é este mesmo app (outra cópia ligada), esta cópia espera e sai sem mexer em nada;
+// - se é OUTRO programa, o app usa a próxima porta livre e grava no .env (o atalho lê a porta de lá).
+// O outro programa nunca é tocado.
+let portaAtual = PORT;
+function quemEstaNaPorta(porta) {
+  return new Promise((ok) => {
+    const req = http.get({ host: "127.0.0.1", port: porta, path: "/api/sessao", timeout: 2000 }, (r) => {
+      let corpo = "";
+      r.on("data", (d) => { if (corpo.length < 4000) corpo += d; });
+      r.on("end", () => { try { const j = JSON.parse(corpo); ok(j.instancia || (j.termoVersao ? "merge-forge" : "outro")); } catch { ok("outro"); } });
+    });
+    req.on("timeout", () => { req.destroy(); ok("outro"); });
+    req.on("error", () => ok("outro"));
+  });
+}
+function portaLivre(porta) {
+  return new Promise((ok) => {
+    const t = http.createServer();
+    t.once("error", () => ok(false));
+    t.listen(porta, HOST, () => t.close(() => ok(true)));
+  });
+}
+servidor.on("error", async (e) => {
+  if (e.code !== "EADDRINUSE" || process.env.BAIXAR_SUPERVISIONADO !== "1") throw e;
+  const quem = await quemEstaNaPorta(portaAtual);
+  if (quem === INSTANCIA || quem === "merge-forge") {
+    console.warn(`porta ${portaAtual}: o Merge Forge já está ligado; esta cópia espera 60 s e sai`);
+    setTimeout(() => process.exit(0), 60000);
+    return;
+  }
+  for (let p = portaAtual + 1; p <= PORT + 50; p++) {
+    if (!(await portaLivre(p))) continue;
+    console.warn(`porta ${portaAtual} está com outro programa (não foi mexido): o Merge Forge passa para a porta ${p}`);
+    portaAtual = p;
+    await config.gravar({ PORT: String(p) }).catch(() => {});
+    return ligar();
+  }
+  console.error(`portas ${PORT} a ${PORT + 50} ocupadas por outros programas; tentando de novo em 60 s`);
+  setTimeout(() => process.exit(1), 60000);
+});
+function ligar() {
+  servidor.listen(portaAtual, HOST);
+  if (v6) { const ir = () => v6.listen(portaAtual, "::1"); if (v6.listening) v6.close(ir); else ir(); }
+}
+servidor.on("listening", () => {
+  console.log(`baixar-redes rodando em ${HOST}:${portaAtual} (senha: ${senhaPropria ? "propria" : SENHA ? "inicial (troca obrigatoria)" : "DESLIGADA"}, yt-dlp: ${YTDLP})`);
   limparAntigos().catch(() => {});
   if (DIAS_GUARDAR) setInterval(() => limparAntigos().catch(() => {}), 60 * 60 * 1000).unref();
 });
+ligar();

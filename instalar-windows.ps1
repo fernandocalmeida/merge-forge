@@ -36,6 +36,21 @@ function InstalarWinget($id, $nome) {
   winget install --id $id -e --accept-source-agreements --accept-package-agreements --silent | Out-Host
   AtualizarPath
 }
+# processos DESTE app: o cmd que roda o iniciar.cmd desta pasta e o que ele abriu (o node do app).
+# Nada mais e desligado: um programa de outra pessoa na mesma porta nunca e tocado.
+function ProcessosDoApp($cmdApp) {
+  $todos = @(Get-CimInstance Win32_Process)
+  $pais = @($todos | Where-Object { $_.Name -eq 'cmd.exe' -and $_.CommandLine -like "*$cmdApp*" })
+  $ids = @($pais | ForEach-Object { $_.ProcessId })
+  $filhos = @($todos | Where-Object { $ids -contains $_.ParentProcessId })
+  return @($filhos) + @($pais)
+}
+function PortaLivre($p) { return -not (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) }
+function GravarPorta($arq, $p) {
+  $linhas = @(Get-Content $arq | Where-Object { $_ -notmatch '^PORT=' })
+  $linhas = @("PORT=$p") + $linhas
+  [IO.File]::WriteAllLines($arq, $linhas)
+}
 function AcharChrome {
   $lugares = @(
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
@@ -111,21 +126,27 @@ if (-not (Test-Path $envArq)) {
 New-Item -ItemType Directory -Force (Join-Path $App "logs") | Out-Null
 
 Passo "Preparando o app para rodar sozinho"
-# desliga SO a copia deste app que ja estivesse rodando (outras instalacoes nao sao tocadas)
+# desliga SO a copia deste app que ja estivesse rodando (outros programas e outras instalacoes nao sao tocados)
 $cmd = Join-Path $App "iniciar.cmd"
-Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" | Where-Object { $_.CommandLine -like "*$cmd*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-$jaRodando = Get-NetTCPConnection -LocalPort $Porta -State Listen -ErrorAction SilentlyContinue
-if ($jaRodando) {
-  Write-Host "  Desligando a versao que estava rodando na porta $Porta..."
-  $jaRodando | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
-  Start-Sleep -Seconds 1
+$meus = @(ProcessosDoApp $cmd)
+if ($meus.Count) {
+  Write-Host "  Desligando a versao do Merge Forge que estava rodando..."
+  $meus | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  Start-Sleep -Seconds 2
 }
-# iniciar.cmd: roda o servidor e, se ele cair, liga de novo depois de 5 segundos
+# porta ocupada por OUTRO programa: usa a proxima livre e guarda no .env (o atalho le a porta de la)
+if (-not (PortaLivre $Porta)) {
+  $antiga = $Porta
+  $Porta = (($Porta + 1)..($Porta + 50) | Where-Object { PortaLivre $_ } | Select-Object -First 1)
+  if (-not $Porta) { throw "As portas $antiga a $($antiga + 50) estao ocupadas por outros programas. Rode de novo com -Porta e um numero livre." }
+  Aviso "A porta $antiga ja e usada por outro programa (que nao foi mexido). O Merge Forge vai usar a porta $Porta."
+}
+GravarPorta $envArq $Porta
+# iniciar.cmd: roda o servidor e, se ele cair, liga de novo depois de 5 segundos (a porta vem do .env)
 [IO.File]::WriteAllLines($cmd, @(
   "@echo off",
   "cd /d `"$App`"",
   "set BAIXAR_SUPERVISIONADO=1",
-  "set PORT=$Porta",
   ":loop",
   "node server.mjs >> logs\servidor.log 2>&1",
   "timeout /t 5 /nobreak >nul",
